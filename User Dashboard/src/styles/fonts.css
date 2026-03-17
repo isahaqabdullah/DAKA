@@ -1,0 +1,18 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@300;400;500;600;700;800;900&family=Barlow+Condensed:wght@400;500;600;700;800;900&display=swap');
+
+@font-face {
+  font-family: "Gotham Ultra Italic";
+  src:
+    url("../assets/fonts/gotham-ultra-italic.ttf") format("truetype"),
+    local("Gotham Ultra Italic"),
+    local("Gotham-Ultra-Italic"),
+    local("GothamUltraItalic"),
+    local("gotham-ultra-italic");
+  font-style: italic;
+  font-weight: 900;
+  font-display: swap;
+}
+
+:root {
+  --font-heading: "Gotham Ultra Italic", "Barlow Condensed", sans-serif;
+}
