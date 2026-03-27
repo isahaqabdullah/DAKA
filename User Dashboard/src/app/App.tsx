@@ -1,262 +1,527 @@
-import { DriverProgressCard } from "./components/DriverProgressCard";
-import { LearningPath } from "./components/LearningPath";
-import { DAKAHeader } from "./components/DAKAHeader";
-import type { LevelData } from "./components/LevelDetailSheet";
-import headerImage from "../public/images/DAKA_Topper_1440x470.jpg";
+import { useEffect, useState } from "react";
+import autodromeHeaderLogo from "../assets/autodrome-header-logo.svg";
+import { AdminCreateCohortPage } from "./components/AdminCreateCohortPage";
+import { AdminAttendancePage } from "./components/AdminAttendancePage";
+import { AdminCohortDashboard } from "./components/AdminCohortDashboard";
+import { AdminCohortManagementPage } from "./components/AdminCohortManagementPage";
+import { AdminCohortTeachingPage } from "./components/AdminCohortTeachingPage";
+import { AdminLandingPage } from "./components/AdminLandingPage";
+import { StudentDashboard } from "./components/StudentDashboard";
 
-const HERO_IMAGE = headerImage;
+type DashboardView = "student" | "admin" | "admin-attendance" | "student-mobile";
 
-// ─── LEVEL 1 — BEGINNER COURSE ───────────────────────────────────────────────
-const level1ThuSessions = [
-  { date: "Thu 2 Apr",  track: "Indoor · Clockwise",      task: "Full Daily Maintenance Checklist", isPast: true },
-  { date: "Thu 9 Apr",  track: "Indoor · Clockwise",      task: "Wheel Change & Tyre Pressure",     isPast: true },
-  { date: "Thu 16 Apr", track: "Indoor · Clockwise",      task: "Brake Pads Check & Refit",         isPast: true },
-  { date: "Thu 23 Apr", track: "Indoor · Clockwise",      task: "Spark Plugs & Gapping",            isPast: true },
-  { date: "Thu 30 Apr", track: "Indoor · Anti-CW",        task: "Brake Fluid Bleed",                isPast: true },
-  { date: "Thu 7 May",  track: "Indoor · Anti-CW",        task: "Carburetor Removal & Refit",       isPast: true },
-  { date: "Thu 14 May", track: "Indoor · Clockwise",      task: "Oil Change",                       isPast: true },
-  { date: "Thu 21 May", track: "Indoor · Clockwise",      task: "Air Filter Removal & Cleaning",    isPast: true },
-  { date: "Thu 28 May", track: "—",                       task: "Eid Al Adha",                      isNoClass: true },
-  { date: "Thu 4 Jun",  track: "Indoor · Race Day 🏁",   task: "Rear Sprocket Alignment",          isPast: true },
-  { date: "Thu 11 Jun", track: "Outdoor · International", task: "Introduction to Outdoor Track",    isPast: true },
-];
+function getInitialView(): DashboardView {
+  if (typeof window === "undefined") {
+    return "admin";
+  }
 
-const level1WedSessions = [
-  { date: "Wed 1 Apr",  track: "Indoor · Clockwise",      task: "Full Daily Maintenance Checklist", isPast: true },
-  { date: "Wed 8 Apr",  track: "Indoor · Clockwise",      task: "Wheel Change & Tyre Pressure",     isPast: true },
-  { date: "Wed 15 Apr", track: "Indoor · Clockwise",      task: "Brake Pads Check & Refit",         isPast: true },
-  { date: "Wed 22 Apr", track: "Indoor · Clockwise",      task: "Spark Plugs & Gapping",            isPast: true },
-  { date: "Wed 29 Apr", track: "Indoor · Anti-CW",        task: "Brake Fluid Bleed",                isPast: true },
-  { date: "Wed 6 May",  track: "Indoor · Anti-CW",        task: "Carburetor Removal & Refit",       isPast: true },
-  { date: "Wed 13 May", track: "Indoor · Clockwise",      task: "Oil Change",                       isPast: true },
-  { date: "Wed 20 May", track: "Indoor · Clockwise",      task: "Air Filter Removal & Cleaning",    isPast: true },
-  { date: "Wed 27 May", track: "—",                       task: "Eid Al Adha",                      isNoClass: true },
-  { date: "Wed 3 Jun",  track: "Indoor · Race Day 🏁",   task: "Rear Sprocket Alignment",          isPast: true },
-  { date: "Wed 10 Jun", track: "Outdoor · International", task: "Introduction to Outdoor Track",    isPast: true },
-];
+  if (window.location.hash === "#student-mobile") {
+    return "student-mobile";
+  }
 
-// ─── LEVEL 2 — ADVANCED COURSE ───────────────────────────────────────────────
-const level2Sessions = [
-  { date: "Tue 31 Mar", track: "Outdoor · Cadet",         task: "Carburetor Cleaning",                isPast: true },
-  { date: "Tue 7 Apr",  track: "Outdoor · Cadet",         task: "Drive Belt Adjust, Remove, Replace", isPast: true },
-  { date: "Tue 14 Apr", track: "Outdoor · Cadet",         task: "Steering Column Removal & Refit",    isPast: true },
-  { date: "Tue 21 Apr", track: "Outdoor · Cadet",         task: "Stub Axel & Track Rod Removal",      isPast: true },
-  { date: "Tue 28 Apr", track: "Outdoor · National",      task: "Front Wheel Alignment",              isPast: true },
-  { date: "Tue 5 May",  track: "Outdoor · National",      task: "Rear Sprocket Refit & Alignment",    isNext: true },
-  { date: "Tue 12 May", track: "Outdoor · National",      task: "Exhaust & Inlet Valve Clearance" },
-  { date: "Tue 19 May", track: "Outdoor · National",      task: "Exhaust Removal & Refit" },
-  { date: "Tue 26 May", track: "—",                       task: "Eid Al Adha / Arafat Day",            isNoClass: true },
-  { date: "Tue 2 Jun",  track: "Outdoor · International", task: "Engine Removal" },
-  { date: "Tue 9 Jun",  track: "Outdoor · International", task: "Race Day — SWS Format 🏁" },
-];
+  if (window.location.hash === "#student") {
+    return "student";
+  }
 
-// ─── LEVEL 3 — RACING CLUB ───────────────────────────────────────────────────
-const level3Sessions = [
-  { date: "Mon 30 Mar", track: "Outdoor International", task: "Checks IAME/Rotax · Sprocket & Chain Tension" },
-  { date: "Mon 6 Apr",  track: "Outdoor International", task: "Race / Class Night (timetable by Week 2)" },
-  { date: "Mon 13 Apr", track: "Outdoor International", task: "Race / Class Night" },
-  { date: "Mon 20 Apr", track: "Outdoor International", task: "Race / Class Night" },
-  { date: "Mon 27 Apr", track: "Outdoor International", task: "Starter Motor + Battery · Spark Check" },
-  { date: "Mon 4 May",  track: "Outdoor International", task: "Race / Class Night" },
-  { date: "Mon 11 May", track: "Outdoor International", task: "Clutch Change · Gear Oil · Radiator Water" },
-  { date: "Mon 18 May", track: "Outdoor International", task: "Race / Class Night" },
-  { date: "Mon 25 May", track: "—",                     task: "Eid Al Adha",                   isNoClass: true },
-  { date: "Mon 1 Jun",  track: "Outdoor International", task: "Full Engine Removal & Installation" },
-  { date: "Mon 8 Jun",  track: "Outdoor International", task: "Race / Class Night" },
-];
+  if (window.location.hash === "#admin") {
+    return "admin";
+  }
 
-// ─── Level data objects ───────────────────────────────────────────────────────
-const LEVELS: LevelData[] = [
-  {
-    levelNumber: 1,
-    levelTitle: "Beginner Course",
-    subtitle: "Indoor Kartdrome · Junior Sodi LR4 (7–12) · Senior RX7/RX8 (13+)",
-    price: "AED 4,250",
-    priceLabel: "per term",
-    schedule: "Thu 4:30–6:30pm (starts 2 Apr) · Wed 4:30–6:30pm (starts 1 Apr)",
-    groupPrice: "AED 7,225 for two drivers",
-    status: "completed",
-    totalSessions: 11,
-    completedSessions: 11,
-    curriculum: [
-      {
-        title: "Driving Skills",
-        items: ["Correct driving position", "Steering technique", "Racing lines & apexes", "Braking points", "CW & Anti-CW circuits", "Safety flags & rules", "Circuit memorisation"],
-      },
-      {
-        title: "Mechanical",
-        items: ["Daily maintenance checklist", "Wheel change & tyre pressure", "Brake pads check & refit", "Spark plugs & gapping", "Brake fluid bleed", "Carburetor removal & refit", "Oil change", "Air filter removal & cleaning", "Rear sprocket alignment"],
-      },
-    ],
-    cohorts: [
-      { label: "Thursday", sessions: level1ThuSessions },
-      { label: "Wednesday", sessions: level1WedSessions },
-    ],
-    note: "🏆 Final session: Indoor Race Day + Bonus outdoor International track introduction",
-  },
-  {
-    levelNumber: 2,
-    levelTitle: "Advanced Course",
-    subtitle: "Outdoor Kartdrome · Cadet → National → International",
-    price: "AED 4,250",
-    priceLabel: "per term",
-    schedule: "Tuesdays 4:30–6:30pm · Starts Tue 31 Mar 2026",
-    groupPrice: "AED 7,225 for two drivers",
-    prerequisite: "Level 1 graduate · OR fast-track: 15+ indoor visits, 150+ laps, sub-33s (coordinator approval only)",
-    status: "active",
-    totalSessions: 11,
-    completedSessions: 5,
-    curriculum: [
-      {
-        title: "Driving Skills",
-        items: ["Overtaking through designated corners", "Position defending", "Consistency & smoothness", "Progressive circuit mastery", "Race discipline & awareness"],
-      },
-      {
-        title: "Mechanical",
-        items: ["Carburetor cleaning", "Drive belt adjust & replace", "Steering column removal", "Stub axel & track rod", "Front wheel alignment", "Rear sprocket alignment", "Exhaust valve clearance", "Exhaust removal & refit", "Full engine removal"],
-      },
-    ],
-    sessions: level2Sessions,
-    note: "🏆 Final session: Race Day in SWS format on International Circuit. Both L1 cohorts merge.",
-  },
-  {
-    levelNumber: 3,
-    levelTitle: "Racing Club",
-    subtitle: "Outdoor International · 5–6 Lesson nights + 4–5 SWS/Rookie Race Nights",
-    price: "AED 4,500",
-    priceLabel: "per term",
-    schedule: "Mondays · Starts 30 Mar",
-    groupPrice: "AED 8,000 for two drivers",
-    prerequisite: "Level 2 graduate only. Race nights timetable issued by Week 2.",
-    ageGroups: [
-      { label: "Juniors", time: "4:30–6:30pm",   ages: "7–12 / 13 yrs" },
-      { label: "Seniors", time: "7:30–10:00pm",  ages: "13/14–18 yrs" },
-    ],
-    status: "locked",
-    totalSessions: 11,
-    completedSessions: 0,
-    curriculum: [
-      {
-        title: "Driving Skills",
-        items: ["Race licence assessment prep", "SWS/Rookie race exposure", "2-stroke IAME/Rotax familiarisation", "Race start procedures", "Racing rules (book provided)"],
-      },
-      {
-        title: "Mechanical",
-        items: ["Pre-drive checks IAME/Rotax", "Sprocket change & chain tension", "Starter motor + battery check", "Clutch change & gear oil", "Radiator water change", "Race rules workshop", "Full engine removal & installation"],
-      },
-    ],
-    sessions: level3Sessions,
-    note: "⚠ Race nights cannot be replaced or substituted. SWS entries available at extra fee.",
-  },
-];
+  if (window.location.hash === "#admin-attendance") {
+    return "admin-attendance";
+  }
 
-export default function App() {
+  const viewParam = new URLSearchParams(window.location.search).get("view");
+
+  if (viewParam === "admin-attendance") {
+    return "admin-attendance";
+  }
+
+  if (viewParam === "student-mobile") {
+    return "student-mobile";
+  }
+
+  if (viewParam === "student") {
+    return "student";
+  }
+
+  return "admin";
+}
+
+function getInitialAdminContext() {
+  if (typeof window === "undefined") {
+    return {
+      screen: "landing" as const,
+      cohortId: "",
+    };
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const screen = params.get("screen");
+  const cohortId = params.get("cohortId") ?? "";
+
+  if (screen === "cohort" && cohortId) {
+    return {
+      screen: "cohort" as const,
+      cohortId,
+    };
+  }
+
+  if (screen === "cohort-management" && cohortId) {
+    return {
+      screen: "cohort-management" as const,
+      cohortId,
+    };
+  }
+
+  if (screen === "cohort-teaching" && cohortId) {
+    return {
+      screen: "cohort-teaching" as const,
+      cohortId,
+    };
+  }
+
+  if (screen === "cohort-create") {
+    return {
+      screen: "cohort-create" as const,
+      cohortId: "",
+    };
+  }
+
+  return {
+    screen: "landing" as const,
+    cohortId: "",
+  };
+}
+
+function InfoCard({
+  label,
+  value,
+  note,
+}: {
+  label: string;
+  value: string;
+  note: string;
+}) {
   return (
     <div
       style={{
-        backgroundColor: "#0C0C0C",
-        minHeight: "100vh",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "flex-start",
-        fontFamily: "Barlow, sans-serif",
+        padding: "18px",
+        borderRadius: "18px",
+        border: "1px solid rgba(255,255,255,0.08)",
+        background: "linear-gradient(135deg, rgba(24,24,24,0.96) 0%, rgba(15,15,15,0.96) 100%)",
       }}
     >
+      <p style={{ color: "#7A7A7A", fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 10px 0" }}>
+        {label}
+      </p>
+      <p style={{ color: "#FFFFFF", fontSize: "28px", fontFamily: "var(--font-body)", fontWeight: 900, margin: "0 0 6px 0", lineHeight: 1 }}>
+        {value}
+      </p>
+      <p style={{ color: "#A7A7A7", fontSize: "13px", margin: 0 }}>{note}</p>
+    </div>
+  );
+}
+
+export default function App() {
+  const initialAdminContext = getInitialAdminContext();
+  const [view, setView] = useState<DashboardView>(() => getInitialView());
+  const [attendanceContext, setAttendanceContext] = useState<{
+    cohortId?: string;
+    classId?: string;
+    returnTo?: "landing" | "cohort";
+  }>({});
+  const [adminScreen, setAdminScreen] = useState<"landing" | "cohort" | "cohort-management" | "cohort-teaching" | "cohort-create">(initialAdminContext.screen);
+  const [selectedAdminCohortId, setSelectedAdminCohortId] = useState<string>(initialAdminContext.cohortId);
+  const adminViewActive = view === "admin" || view === "admin-attendance";
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      setView(getInitialView());
+    };
+
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
+
+  function changeView(nextView: DashboardView) {
+    setView(nextView);
+    const hashByView: Record<DashboardView, string> = {
+      admin: "#admin",
+      "admin-attendance": "#admin-attendance",
+      student: "#student",
+      "student-mobile": "#student-mobile",
+    };
+
+    const nextUrl = new URL(window.location.href);
+    nextUrl.searchParams.delete("view");
+    nextUrl.hash = hashByView[nextView];
+    window.history.replaceState(null, "", nextUrl.toString());
+  }
+
+  function openAdminLanding() {
+    setAdminScreen("landing");
+    changeView("admin");
+  }
+
+  function openAdminCohort(cohortId: string) {
+    setSelectedAdminCohortId(cohortId);
+    setAdminScreen("cohort");
+    changeView("admin");
+  }
+
+  function openAdminCohortManagement(cohortId: string) {
+    setSelectedAdminCohortId(cohortId);
+    setAdminScreen("cohort-management");
+    changeView("admin");
+  }
+
+  function openAdminCohortTeaching(cohortId: string) {
+    setSelectedAdminCohortId(cohortId);
+    setAdminScreen("cohort-teaching");
+    changeView("admin");
+  }
+
+  function openAdminCohortCreate() {
+    setAdminScreen("cohort-create");
+    changeView("admin");
+  }
+
+  return (
+    <>
+      <style>{`
+        .academy-shell {
+          min-height: 100vh;
+          font-family: var(--font-body);
+        }
+        .academy-page {
+          width: min(1400px, calc(100% - 48px));
+          margin: 0 auto;
+          padding: 28px 0 40px;
+        }
+        .academy-topbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 18px;
+          padding: 18px 20px;
+          border: 1px solid rgba(255,255,255,0.08);
+          border-radius: 24px;
+          background: linear-gradient(135deg, rgba(24,24,24,0.96) 0%, rgba(12,12,12,0.96) 100%);
+          box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+          margin-bottom: 24px;
+          position: sticky;
+          top: 18px;
+          z-index: 10;
+          backdrop-filter: blur(18px);
+        }
+        .academy-nav {
+          display: inline-flex;
+          gap: 10px;
+          padding: 6px;
+          border-radius: 999px;
+          background-color: rgba(255,255,255,0.04);
+          border: 1px solid rgba(255,255,255,0.08);
+        }
+        .academy-content {
+          display: grid;
+          gap: 24px;
+        }
+        .student-layout {
+          display: grid;
+          grid-template-columns: minmax(0, 1.05fr) minmax(380px, 420px);
+          gap: 24px;
+          align-items: start;
+        }
+        .student-info-grid {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 14px;
+        }
+        .mobile-view-shell {
+          display: grid;
+          gap: 24px;
+          justify-items: center;
+        }
+        .mobile-device-frame {
+          padding: 14px;
+          border-radius: 38px;
+          border: 1px solid rgba(255,255,255,0.08);
+          background:
+            linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.02) 100%),
+            linear-gradient(135deg, rgba(24,24,24,0.98) 0%, rgba(9,9,9,0.98) 100%);
+          box-shadow: 0 30px 80px rgba(0,0,0,0.45);
+        }
+        @media (max-width: 1100px) {
+          .student-layout,
+          .student-info-grid {
+            grid-template-columns: 1fr;
+          }
+        }
+        @media (max-width: 720px) {
+          .academy-page {
+            width: calc(100% - 24px);
+            padding-top: 16px;
+          }
+          .academy-topbar {
+            position: static;
+            flex-direction: column;
+            align-items: stretch;
+          }
+          .academy-nav {
+            width: 100%;
+          }
+        }
+      `}</style>
+
       <div
+        className="academy-shell"
         style={{
-          width: "100%",
-          maxWidth: "375px",
-          minHeight: "100vh",
-          backgroundColor: "#0C0C0C",
-          position: "relative",
-          paddingBottom: "100px",
+          background: adminViewActive
+            ? "radial-gradient(circle at top right, rgba(200,52,46,0.10), transparent 26%), linear-gradient(180deg, #F7F2ED 0%, #F2ECE7 100%)"
+            : "radial-gradient(circle at top right, rgba(200,52,46,0.16), transparent 30%), linear-gradient(180deg, #111111 0%, #090909 100%)",
         }}
       >
-        {/* Hero header */}
-        <DAKAHeader heroImageUrl={HERO_IMAGE} />
+        <div className="academy-page">
+          <div className="academy-topbar">
+            <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
+              <img src={autodromeHeaderLogo} alt="Dubai Autodrome" style={{ height: "36px", width: "auto" }} />
+              <div>
+                <p style={{ color: "#C8342E", fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 4px 0" }}>
+                  DAKA Platform
+                </p>
+                <h1 style={{ color: "#FFFFFF", fontSize: "28px", fontFamily: "var(--font-heading)", fontWeight: 900, margin: 0, lineHeight: 1 }}>
+                  TRAINING DASHBOARDS
+                </h1>
+              </div>
+            </div>
 
-        {/* Driver progress card */}
-        <div style={{ padding: "18px 16px 0" }}>
-          <DriverProgressCard
-            name="Ahmed Al Karimi"
-            level="LEVEL 2"
-            levelLabel="Advanced"
-            progressPercent={45}
-            sessionsCompleted={5}
-            totalSessions={11}
-            nextSessionDate="5 May"
-          />
-        </div>
+            <div className="academy-nav">
+                {([
+                  { id: "admin", label: "Admin Dashboard" },
+                  { id: "student", label: "User Dashboard" },
+                  { id: "student-mobile", label: "Mobile View" },
+                ] as const).map((option) => {
+                const active = option.id === "admin" ? view === "admin" || view === "admin-attendance" : view === option.id;
 
-        {/* Section header */}
-        <div style={{ padding: "22px 16px 4px", display: "flex", alignItems: "center", gap: "10px" }}>
-          <div style={{ width: "3px", height: "18px", backgroundColor: "#C8342E", borderRadius: "2px", flexShrink: 0 }} />
-          <p style={{ color: "#FFFFFF", fontSize: "13px", fontFamily: "var(--font-heading)", fontStyle: "italic", fontWeight: 800, letterSpacing: "2.5px", textTransform: "uppercase", margin: 0 }}>
-            Your Racing Journey
-          </p>
-          <div style={{ flex: 1, height: "1px", backgroundColor: "rgba(255,255,255,0.06)" }} />
-        </div>
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => {
+                      if (option.id === "admin") {
+                        openAdminLanding();
+                        return;
+                      }
 
-        <p style={{ color: "#3A3A3A", fontSize: "11px", fontFamily: "Barlow, sans-serif", margin: "0 0 8px 0", padding: "0 16px" }}>
-          Tap a level to view curriculum &amp; schedule
-        </p>
+                      changeView(option.id);
+                    }}
+                    style={{
+                      height: "44px",
+                      padding: "0 18px",
+                      borderRadius: "999px",
+                      border: "none",
+                      background: active ? "linear-gradient(135deg, #C8342E 0%, #9E201C 100%)" : "transparent",
+                      color: "#FFFFFF",
+                      fontSize: "13px",
+                      fontFamily: "var(--font-body)",
+                      fontWeight: 800,
+                      letterSpacing: "0px",
+                      textTransform: "uppercase",
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
 
-        {/* ── Learning path ── */}
-        <div style={{ padding: "0 16px" }}>
-          <LearningPath levels={LEVELS} />
-        </div>
+          <div className="academy-content">
+            {view === "admin" ? (
+              adminScreen === "landing" ? (
+                <AdminLandingPage
+                  onOpenCohort={openAdminCohort}
+                  onOpenCohortCreate={openAdminCohortCreate}
+                  onOpenAttendance={(context) => {
+                    setAttendanceContext({
+                      ...context,
+                      returnTo: "landing",
+                    });
+                    changeView("admin-attendance");
+                  }}
+                />
+              ) : adminScreen === "cohort" ? (
+                <AdminCohortDashboard
+                  initialCohortId={selectedAdminCohortId}
+                  onBackToLanding={() => setAdminScreen("landing")}
+                  onOpenCohortManagement={openAdminCohortManagement}
+                  onOpenTeachingOperations={openAdminCohortTeaching}
+                  onOpenAttendance={(context) => {
+                    setAttendanceContext({
+                      ...context,
+                      returnTo: "cohort",
+                    });
+                    changeView("admin-attendance");
+                  }}
+                />
+              ) : adminScreen === "cohort-management" ? (
+                <AdminCohortManagementPage
+                  initialCohortId={selectedAdminCohortId}
+                  onBackToCohortDashboard={(cohortId) => {
+                    setSelectedAdminCohortId(cohortId);
+                    setAdminScreen("cohort");
+                  }}
+                />
+              ) : adminScreen === "cohort-create" ? (
+                <AdminCreateCohortPage
+                  onBackToLanding={() => setAdminScreen("landing")}
+                  onOpenCreatedCohort={(cohortId) => {
+                    setSelectedAdminCohortId(cohortId);
+                    setAdminScreen("cohort");
+                  }}
+                />
+              ) : (
+                <AdminCohortTeachingPage
+                  initialCohortId={selectedAdminCohortId}
+                  onBackToCohortDashboard={(cohortId) => {
+                    setSelectedAdminCohortId(cohortId);
+                    setAdminScreen("cohort");
+                  }}
+                />
+              )
+            ) : view === "admin-attendance" ? (
+              <AdminAttendancePage
+                initialCohortId={attendanceContext.cohortId}
+                initialClassId={attendanceContext.classId}
+                allowCohortSwitch={attendanceContext.returnTo !== "cohort"}
+                onBackToDashboard={() => {
+                  if (attendanceContext.returnTo === "cohort" && attendanceContext.cohortId) {
+                    setSelectedAdminCohortId(attendanceContext.cohortId);
+                  }
+                  setAdminScreen(attendanceContext.returnTo ?? "landing");
+                  changeView("admin");
+                }}
+              />
+            ) : view === "student-mobile" ? (
+              <div className="mobile-view-shell">
+                <div
+                  style={{
+                    width: "min(860px, 100%)",
+                    padding: "28px",
+                    borderRadius: "26px",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    background:
+                      "radial-gradient(circle at top right, rgba(200,52,46,0.2), transparent 30%), linear-gradient(135deg, rgba(24,24,24,0.98) 0%, rgba(12,12,12,0.98) 100%)",
+                    boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
+                  }}
+                >
+                  <p style={{ color: "#C8342E", fontSize: "11px", letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 8px 0" }}>
+                    User Dashboard
+                  </p>
+                  <h2 style={{ color: "#FFFFFF", fontSize: "42px", fontFamily: "var(--font-heading)", fontWeight: 900, margin: "0 0 16px 0", lineHeight: 0.96 }}>
+                    MOBILE VIEW
+                  </h2>
+                  <p style={{ color: "#D5D5D5", fontSize: "16px", lineHeight: 1.7, margin: "0 0 20px 0", maxWidth: "620px" }}>
+                    This mode isolates the driver-facing experience in a phone-size frame so you can review the user dashboard exactly as a mobile product view.
+                  </p>
 
-        {/* Footer */}
-        <div style={{ textAlign: "center", padding: "8px 16px 4px" }}>
-          <p style={{ color: "#222222", fontSize: "10px", fontFamily: "Barlow, sans-serif", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", margin: 0 }}>
-            Dubai Autodrome Kartdrome · DAKA
-          </p>
-        </div>
+                  <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      onClick={() => changeView("student")}
+                      style={{
+                        height: "46px",
+                        padding: "0 18px",
+                        borderRadius: "999px",
+                        border: "1px solid rgba(255,255,255,0.12)",
+                        background: "rgba(255,255,255,0.04)",
+                        color: "#FFFFFF",
+                        fontSize: "13px",
+                        fontFamily: "var(--font-body)",
+                        fontWeight: 800,
+                        letterSpacing: "0px",
+                        textTransform: "uppercase",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Back To Split View
+                    </button>
+                  </div>
+                </div>
 
-        {/* Sticky CTA */}
-        <div
-          style={{
-            position: "fixed",
-            bottom: 0,
-            left: "50%",
-            transform: "translateX(-50%)",
-            width: "100%",
-            maxWidth: "375px",
-            padding: "10px 16px 28px",
-            background: "linear-gradient(to top, #0C0C0C 65%, transparent)",
-            pointerEvents: "none",
-          }}
-        >
-          <button
-            style={{
-              width: "100%",
-              height: "52px",
-              backgroundColor: "#C8342E",
-              color: "#FFFFFF",
-              fontSize: "14px",
-              fontFamily: "Barlow Condensed, sans-serif",
-              fontWeight: 800,
-              letterSpacing: "2px",
-              textTransform: "uppercase",
-              border: "none",
-              borderRadius: "12px",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "8px",
-              pointerEvents: "all",
-            }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = "#A82824"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.backgroundColor = "#C8342E"; }}
-          >
-            Continue Training — Level 2
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path d="M1 7h12M8 2l5 5-5 5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
+                <div className="mobile-device-frame">
+                  <StudentDashboard />
+                </div>
+              </div>
+            ) : (
+              <div className="student-layout">
+                <div
+                  style={{
+                    padding: "28px",
+                    borderRadius: "26px",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    background:
+                      "radial-gradient(circle at top right, rgba(200,52,46,0.18), transparent 32%), linear-gradient(135deg, rgba(24,24,24,0.98) 0%, rgba(14,14,14,0.98) 55%, rgba(8,8,8,0.98) 100%)",
+                    boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
+                  }}
+                >
+                  <p style={{ color: "#C8342E", fontSize: "11px", letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 8px 0" }}>
+                    Student Experience
+                  </p>
+                  <h2 style={{ color: "#FFFFFF", fontSize: "42px", fontFamily: "var(--font-heading)", fontWeight: 900, margin: "0 0 16px 0", lineHeight: 0.96 }}>
+                    MOBILE DASHBOARD PREVIEW
+                  </h2>
+                  <p style={{ color: "#D5D5D5", fontSize: "16px", lineHeight: 1.7, margin: "0 0 20px 0", maxWidth: "680px" }}>
+                    The original driver-facing dashboard stays available as a compact mobile experience. Use this tab to preview the student journey while the admin tab runs the operational cockpit for cohorts, scheduling, attendance, and reports.
+                  </p>
+
+                  <div className="student-info-grid" style={{ marginBottom: "22px" }}>
+                    <InfoCard label="Form Factor" value="375px" note="Kept as a phone-first student interface" />
+                    <InfoCard label="Current Driver" value="Ahmed" note="Advanced level student profile loaded" />
+                    <InfoCard label="Next Session" value="5 May" note="Level 2 continuation CTA remains intact" />
+                  </div>
+
+                  <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      onClick={() => changeView("student-mobile")}
+                      style={{
+                        height: "46px",
+                        padding: "0 18px",
+                        borderRadius: "999px",
+                        border: "none",
+                        background: "linear-gradient(135deg, #C8342E 0%, #9E201C 100%)",
+                        color: "#FFFFFF",
+                        fontSize: "13px",
+                        fontFamily: "var(--font-body)",
+                        fontWeight: 800,
+                        letterSpacing: "0px",
+                        textTransform: "uppercase",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Open Mobile View
+                    </button>
+                    <span style={{ padding: "9px 12px", borderRadius: "999px", backgroundColor: "rgba(200,52,46,0.12)", border: "1px solid rgba(200,52,46,0.3)", color: "#FFFFFF", fontSize: "12px", letterSpacing: "0px", textTransform: "uppercase" }}>
+                      Same red-black theme
+                    </span>
+                    <span style={{ padding: "9px 12px", borderRadius: "999px", backgroundColor: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#FFFFFF", fontSize: "12px", letterSpacing: "0px", textTransform: "uppercase" }}>
+                      Existing learning path preserved
+                    </span>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "center" }}>
+                  <StudentDashboard />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

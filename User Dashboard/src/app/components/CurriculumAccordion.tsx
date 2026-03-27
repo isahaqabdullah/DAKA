@@ -26,7 +26,7 @@ export function CurriculumAccordion({ sections }: CurriculumAccordionProps) {
           fontFamily: "var(--font-heading)",
           fontStyle: "italic",
           fontWeight: 700,
-          letterSpacing: "2.5px",
+          letterSpacing: "0px",
           textTransform: "uppercase",
           margin: "0 0 6px 0",
         }}
@@ -108,7 +108,7 @@ export function CurriculumAccordion({ sections }: CurriculumAccordionProps) {
                       style={{
                         color: "#8D8D8D",
                         fontSize: "12px",
-                        fontFamily: "Barlow, sans-serif",
+                        fontFamily: "var(--font-body)",
                       }}
                     >
                       {item}

@@ -1,3 +1,4 @@
+import React from "react";
 import autodromeHeaderLogo from "../../assets/autodrome-header-logo.svg";
 
 interface DAKAHeaderProps {
@@ -81,7 +82,7 @@ export function DAKAHeader({ heroImageUrl }: DAKAHeaderProps) {
             style={{
               color: "#FFFFFF",
               fontSize: "13px",
-              fontFamily: "Barlow Condensed, sans-serif",
+              fontFamily: "var(--font-body)",
               fontWeight: 800,
             }}
           >
@@ -103,9 +104,9 @@ export function DAKAHeader({ heroImageUrl }: DAKAHeaderProps) {
           style={{
             color: "#C8342E",
             fontSize: "10px",
-            fontFamily: "Barlow, sans-serif",
+            fontFamily: "var(--font-body)",
             fontWeight: 700,
-            letterSpacing: "2.5px",
+            letterSpacing: "0px",
             textTransform: "uppercase",
             margin: "0 0 2px 0",
           }}
@@ -118,7 +119,7 @@ export function DAKAHeader({ heroImageUrl }: DAKAHeaderProps) {
             fontSize: "28px",
             fontFamily: "var(--font-heading)",
             fontWeight: 900,
-            letterSpacing: "1px",
+            letterSpacing: "0px",
             textTransform: "uppercase",
             margin: 0,
             lineHeight: 1,

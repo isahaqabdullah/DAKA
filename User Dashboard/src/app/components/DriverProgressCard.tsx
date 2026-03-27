@@ -59,9 +59,9 @@ export function DriverProgressCard({
               style={{
                 color: "#5A5A5A",
                 fontSize: "9px",
-                fontFamily: "Barlow, sans-serif",
+                fontFamily: "var(--font-body)",
                 fontWeight: 700,
-                letterSpacing: "2.5px",
+                letterSpacing: "0px",
                 textTransform: "uppercase",
                 margin: "0 0 3px 0",
               }}
@@ -74,7 +74,7 @@ export function DriverProgressCard({
                 fontSize: "21px",
                 fontFamily: "var(--font-heading)",
                 fontWeight: 800,
-                letterSpacing: "0.5px",
+                letterSpacing: "0px",
                 margin: 0,
                 lineHeight: 1.1,
               }}
@@ -97,9 +97,9 @@ export function DriverProgressCard({
               style={{
                 color: "rgba(255,255,255,0.7)",
                 fontSize: "8px",
-                fontFamily: "Barlow, sans-serif",
+                fontFamily: "var(--font-body)",
                 fontWeight: 700,
-                letterSpacing: "2px",
+                letterSpacing: "0px",
                 textTransform: "uppercase",
                 margin: "0 0 0px 0",
               }}
@@ -110,9 +110,9 @@ export function DriverProgressCard({
               style={{
                 color: "#FFFFFF",
                 fontSize: "14px",
-                fontFamily: "Barlow Condensed, sans-serif",
+                fontFamily: "var(--font-body)",
                 fontWeight: 900,
-                letterSpacing: "1px",
+                letterSpacing: "0px",
                 margin: 0,
                 lineHeight: 1.1,
               }}
@@ -136,9 +136,9 @@ export function DriverProgressCard({
               style={{
                 color: "#5A5A5A",
                 fontSize: "9px",
-                fontFamily: "Barlow, sans-serif",
+                fontFamily: "var(--font-body)",
                 fontWeight: 700,
-                letterSpacing: "2px",
+                letterSpacing: "0px",
                 textTransform: "uppercase",
               }}
             >
@@ -148,7 +148,7 @@ export function DriverProgressCard({
               style={{
                 color: "#C8342E",
                 fontSize: "13px",
-                fontFamily: "Barlow Condensed, sans-serif",
+                fontFamily: "var(--font-body)",
                 fontWeight: 800,
               }}
             >
@@ -188,9 +188,9 @@ export function DriverProgressCard({
               style={{
                 color: "#5A5A5A",
                 fontSize: "9px",
-                fontFamily: "Barlow, sans-serif",
+                fontFamily: "var(--font-body)",
                 fontWeight: 700,
-                letterSpacing: "1.5px",
+                letterSpacing: "0px",
                 textTransform: "uppercase",
                 margin: "0 0 2px 0",
               }}
@@ -201,7 +201,7 @@ export function DriverProgressCard({
               style={{
                 color: "#FFFFFF",
                 fontSize: "16px",
-                fontFamily: "Barlow Condensed, sans-serif",
+                fontFamily: "var(--font-body)",
                 fontWeight: 800,
                 margin: 0,
                 lineHeight: 1,
@@ -225,9 +225,9 @@ export function DriverProgressCard({
               style={{
                 color: "#5A5A5A",
                 fontSize: "9px",
-                fontFamily: "Barlow, sans-serif",
+                fontFamily: "var(--font-body)",
                 fontWeight: 700,
-                letterSpacing: "1.5px",
+                letterSpacing: "0px",
                 textTransform: "uppercase",
                 margin: "0 0 2px 0",
               }}
@@ -238,7 +238,7 @@ export function DriverProgressCard({
               style={{
                 color: "#FFFFFF",
                 fontSize: "16px",
-                fontFamily: "Barlow Condensed, sans-serif",
+                fontFamily: "var(--font-body)",
                 fontWeight: 800,
                 margin: 0,
                 lineHeight: 1,

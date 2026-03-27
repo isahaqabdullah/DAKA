@@ -27,7 +27,7 @@ export function SessionTimeline({ sessions }: SessionTimelineProps) {
           fontFamily: "var(--font-heading)",
           fontStyle: "italic",
           fontWeight: 700,
-          letterSpacing: "2.5px",
+          letterSpacing: "0px",
           textTransform: "uppercase",
           margin: "0 0 6px 0",
         }}
@@ -62,21 +62,21 @@ export function SessionTimeline({ sessions }: SessionTimelineProps) {
                   flexShrink: 0,
                 }}
               >
-                <p style={{ color: "#3A3A3A", fontSize: "9px", fontFamily: "Barlow, sans-serif", fontWeight: 700, margin: 0, textTransform: "uppercase" }}>{day}</p>
-                <p style={{ color: "#3A3A3A", fontSize: "15px", fontFamily: "Barlow Condensed, sans-serif", fontWeight: 900, margin: 0, lineHeight: 1 }}>{num}</p>
-                <p style={{ color: "#3A3A3A", fontSize: "9px", fontFamily: "Barlow, sans-serif", fontWeight: 700, margin: 0, textTransform: "uppercase" }}>{month}</p>
+                <p style={{ color: "#3A3A3A", fontSize: "9px", fontFamily: "var(--font-body)", fontWeight: 700, margin: 0, textTransform: "uppercase" }}>{day}</p>
+                <p style={{ color: "#3A3A3A", fontSize: "15px", fontFamily: "var(--font-body)", fontWeight: 900, margin: 0, lineHeight: 1 }}>{num}</p>
+                <p style={{ color: "#3A3A3A", fontSize: "9px", fontFamily: "var(--font-body)", fontWeight: 700, margin: 0, textTransform: "uppercase" }}>{month}</p>
               </div>
               <div>
-                <p style={{ color: "#3A3A3A", fontSize: "11px", fontFamily: "Barlow, sans-serif", fontWeight: 600, margin: "0 0 1px 0" }}>
+                <p style={{ color: "#3A3A3A", fontSize: "11px", fontFamily: "var(--font-body)", fontWeight: 600, margin: "0 0 1px 0" }}>
                   No Class
                 </p>
-                <p style={{ color: "#2E2E2E", fontSize: "10px", fontFamily: "Barlow, sans-serif", margin: 0 }}>
+                <p style={{ color: "#2E2E2E", fontSize: "10px", fontFamily: "var(--font-body)", margin: 0 }}>
                   {session.task}
                 </p>
               </div>
               <div style={{ marginLeft: "auto", flexShrink: 0 }}>
                 <div style={{ backgroundColor: "rgba(255,255,255,0.04)", borderRadius: "4px", padding: "2px 6px" }}>
-                  <span style={{ color: "#3A3A3A", fontSize: "8px", fontFamily: "Barlow, sans-serif", fontWeight: 700, letterSpacing: "0.5px" }}>HOLIDAY</span>
+                  <span style={{ color: "#3A3A3A", fontSize: "8px", fontFamily: "var(--font-body)", fontWeight: 700, letterSpacing: "0px" }}>HOLIDAY</span>
                 </div>
               </div>
             </div>
@@ -115,9 +115,9 @@ export function SessionTimeline({ sessions }: SessionTimelineProps) {
                 flexShrink: 0,
               }}
             >
-              <p style={{ color: session.isNext ? "rgba(255,255,255,0.75)" : "#3A3A3A", fontSize: "9px", fontFamily: "Barlow, sans-serif", fontWeight: 700, textTransform: "uppercase", margin: 0, letterSpacing: "0.3px" }}>{day}</p>
-              <p style={{ color: session.isNext ? "#FFFFFF" : session.isPast ? "#707070" : "#AAAAAA", fontSize: "17px", fontFamily: "Barlow Condensed, sans-serif", fontWeight: 900, margin: 0, lineHeight: 1 }}>{num}</p>
-              <p style={{ color: session.isNext ? "rgba(255,255,255,0.75)" : "#3A3A3A", fontSize: "9px", fontFamily: "Barlow, sans-serif", fontWeight: 700, textTransform: "uppercase", margin: 0, letterSpacing: "0.3px" }}>{month}</p>
+              <p style={{ color: session.isNext ? "rgba(255,255,255,0.75)" : "#3A3A3A", fontSize: "9px", fontFamily: "var(--font-body)", fontWeight: 700, textTransform: "uppercase", margin: 0, letterSpacing: "0px" }}>{day}</p>
+              <p style={{ color: session.isNext ? "#FFFFFF" : session.isPast ? "#707070" : "#AAAAAA", fontSize: "17px", fontFamily: "var(--font-body)", fontWeight: 900, margin: 0, lineHeight: 1 }}>{num}</p>
+              <p style={{ color: session.isNext ? "rgba(255,255,255,0.75)" : "#3A3A3A", fontSize: "9px", fontFamily: "var(--font-body)", fontWeight: 700, textTransform: "uppercase", margin: 0, letterSpacing: "0px" }}>{month}</p>
             </div>
 
             {/* Content */}
@@ -126,7 +126,7 @@ export function SessionTimeline({ sessions }: SessionTimelineProps) {
                 style={{
                   color: session.isPast ? "#606060" : "#DDDDDD",
                   fontSize: "12px",
-                  fontFamily: "Barlow, sans-serif",
+                  fontFamily: "var(--font-body)",
                   fontWeight: 600,
                   margin: "0 0 2px 0",
                   whiteSpace: "nowrap",
@@ -140,7 +140,7 @@ export function SessionTimeline({ sessions }: SessionTimelineProps) {
                 style={{
                   color: session.isPast ? "#4A4A4A" : "#5A5A5A",
                   fontSize: "11px",
-                  fontFamily: "Barlow, sans-serif",
+                  fontFamily: "var(--font-body)",
                   margin: 0,
                   lineHeight: 1.35,
                 }}
@@ -152,12 +152,12 @@ export function SessionTimeline({ sessions }: SessionTimelineProps) {
             {/* Tag */}
             {session.isNext && (
               <div style={{ backgroundColor: "#C8342E", borderRadius: "5px", padding: "2px 6px", flexShrink: 0 }}>
-                <span style={{ color: "#FFFFFF", fontSize: "8px", fontFamily: "Barlow, sans-serif", fontWeight: 700, letterSpacing: "0.5px" }}>NEXT</span>
+                <span style={{ color: "#FFFFFF", fontSize: "8px", fontFamily: "var(--font-body)", fontWeight: 700, letterSpacing: "0px" }}>NEXT</span>
               </div>
             )}
             {session.isPast && !session.isNext && (
               <div style={{ backgroundColor: "rgba(255,255,255,0.04)", borderRadius: "5px", padding: "2px 6px", flexShrink: 0 }}>
-                <span style={{ color: "#3A3A3A", fontSize: "8px", fontFamily: "Barlow, sans-serif", fontWeight: 700, letterSpacing: "0.5px" }}>DONE</span>
+                <span style={{ color: "#3A3A3A", fontSize: "8px", fontFamily: "var(--font-body)", fontWeight: 700, letterSpacing: "0px" }}>DONE</span>
               </div>
             )}
           </div>

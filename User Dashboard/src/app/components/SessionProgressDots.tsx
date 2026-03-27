@@ -11,9 +11,9 @@ export function SessionProgressDots({ total, completed }: SessionProgressDotsPro
           style={{
             color: "#5A5A5A",
             fontSize: "9px",
-            fontFamily: "Barlow, sans-serif",
+            fontFamily: "var(--font-body)",
             fontWeight: 700,
-            letterSpacing: "2px",
+            letterSpacing: "0px",
             textTransform: "uppercase",
           }}
         >
@@ -23,7 +23,7 @@ export function SessionProgressDots({ total, completed }: SessionProgressDotsPro
           style={{
             color: "#5A5A5A",
             fontSize: "10px",
-            fontFamily: "Barlow Condensed, sans-serif",
+            fontFamily: "var(--font-body)",
             fontWeight: 700,
           }}
         >

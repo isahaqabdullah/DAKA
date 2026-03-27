@@ -158,7 +158,7 @@ export function LearningPath({ levels }: LearningPathProps) {
             }}
           >
             <div style={{ width: 0, height: 0, borderTop: "4px solid transparent", borderBottom: "4px solid transparent", borderLeft: "5px solid rgba(255,255,255,0.7)" }} />
-            <span style={{ color: "#FFFFFF", fontSize: "9px", fontFamily: "Barlow, sans-serif", fontWeight: 800, letterSpacing: "1px", whiteSpace: "nowrap" }}>
+            <span style={{ color: "#FFFFFF", fontSize: "9px", fontFamily: "var(--font-body)", fontWeight: 800, letterSpacing: "0px", whiteSpace: "nowrap" }}>
               YOU ARE HERE
             </span>
           </div>
@@ -216,14 +216,14 @@ export function LearningPath({ levels }: LearningPathProps) {
                     <span style={{
                       color: "#C8342E",
                       fontSize: isActive ? "30px" : "24px",
-                      fontFamily: "Barlow Condensed, sans-serif",
+                      fontFamily: "var(--font-body)",
                       fontWeight: 900,
                       lineHeight: 1,
                     }}>
                       {level.levelNumber}
                     </span>
                     {isActive && (
-                      <span style={{ color: "rgba(200,52,46,0.6)", fontSize: "8px", fontFamily: "Barlow, sans-serif", fontWeight: 700, letterSpacing: "1.5px" }}>
+                      <span style={{ color: "rgba(200,52,46,0.6)", fontSize: "8px", fontFamily: "var(--font-body)", fontWeight: 700, letterSpacing: "0px" }}>
                         ACTIVE
                       </span>
                     )}
@@ -245,9 +245,9 @@ export function LearningPath({ levels }: LearningPathProps) {
                 <p style={{
                   color: isLocked ? "#3A3A3A" : isCompleted ? "#22C55E" : "#C8342E",
                   fontSize: "9px",
-                  fontFamily: "Barlow, sans-serif",
+                  fontFamily: "var(--font-body)",
                   fontWeight: 700,
-                  letterSpacing: "2px",
+                  letterSpacing: "0px",
                   textTransform: "uppercase",
                   margin: "0 0 2px 0",
                 }}>
@@ -259,7 +259,7 @@ export function LearningPath({ levels }: LearningPathProps) {
                   fontFamily: "var(--font-heading)",
                   fontStyle: "italic",
                   fontWeight: 800,
-                  letterSpacing: "0.3px",
+                  letterSpacing: "0px",
                   margin: "0 0 2px 0",
                   lineHeight: 1.1,
                 }}>
@@ -268,7 +268,7 @@ export function LearningPath({ levels }: LearningPathProps) {
                 <p style={{
                   color: isLocked ? "#2A2A2A" : "#5A5A5A",
                   fontSize: "10px",
-                  fontFamily: "Barlow, sans-serif",
+                  fontFamily: "var(--font-body)",
                   margin: 0,
                 }}>
                   {level.completedSessions}/{level.totalSessions} sessions

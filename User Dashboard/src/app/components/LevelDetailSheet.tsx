@@ -116,23 +116,23 @@ export function LevelDetailSheet({ level, onClose }: LevelDetailSheetProps) {
           {/* Header */}
           <div style={{ padding: "14px 16px 0", display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ color: "#5A5A5A", fontSize: "9px", fontFamily: "Barlow, sans-serif", fontWeight: 700, letterSpacing: "2.5px", textTransform: "uppercase", margin: "0 0 2px 0" }}>
+              <p style={{ color: "#5A5A5A", fontSize: "9px", fontFamily: "var(--font-body)", fontWeight: 700, letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 2px 0" }}>
                 Level {level.levelNumber}
               </p>
-              <p style={{ color: "#FFFFFF", fontSize: "22px", fontFamily: "var(--font-heading)", fontStyle: "italic", fontWeight: 900, letterSpacing: "0.5px", margin: "0 0 3px 0", lineHeight: 1.1 }}>
+              <p style={{ color: "#FFFFFF", fontSize: "22px", fontFamily: "var(--font-heading)", fontStyle: "italic", fontWeight: 900, letterSpacing: "0px", margin: "0 0 3px 0", lineHeight: 1.1 }}>
                 {level.levelTitle.toUpperCase()}
               </p>
-              <p style={{ color: "#4A4A4A", fontSize: "11px", fontFamily: "Barlow, sans-serif", margin: "0 0 8px 0", lineHeight: 1.4 }}>
+              <p style={{ color: "#4A4A4A", fontSize: "11px", fontFamily: "var(--font-body)", margin: "0 0 8px 0", lineHeight: 1.4 }}>
                 {level.subtitle}
               </p>
               {/* Status + price row */}
               <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                 <div style={{ backgroundColor: cfg.bg, border: `1px solid ${cfg.border}`, borderRadius: "6px", padding: "3px 9px", display: "flex", alignItems: "center", gap: "4px" }}>
                   {cfg.icon}
-                  <span style={{ color: cfg.color, fontSize: "10px", fontFamily: "Barlow, sans-serif", fontWeight: 700 }}>{cfg.label}</span>
+                  <span style={{ color: cfg.color, fontSize: "10px", fontFamily: "var(--font-body)", fontWeight: 700 }}>{cfg.label}</span>
                 </div>
-                <span style={{ color: "#CCCCCC", fontSize: "15px", fontFamily: "Barlow Condensed, sans-serif", fontWeight: 800 }}>{level.price}</span>
-                <span style={{ color: "#4A4A4A", fontSize: "10px", fontFamily: "Barlow, sans-serif" }}>{level.priceLabel}</span>
+                <span style={{ color: "#CCCCCC", fontSize: "15px", fontFamily: "var(--font-body)", fontWeight: 800 }}>{level.price}</span>
+                <span style={{ color: "#4A4A4A", fontSize: "10px", fontFamily: "var(--font-body)" }}>{level.priceLabel}</span>
               </div>
             </div>
             <button
@@ -147,7 +147,7 @@ export function LevelDetailSheet({ level, onClose }: LevelDetailSheetProps) {
           {level.status === "locked" && (
             <div style={{ margin: "12px 16px 0", backgroundColor: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "10px", padding: "12px", display: "flex", gap: "10px", alignItems: "center" }}>
               <Lock size={16} color="#5A5A5A" style={{ flexShrink: 0 }} />
-              <p style={{ color: "#5A5A5A", fontSize: "12px", fontFamily: "Barlow, sans-serif", margin: 0, lineHeight: 1.5 }}>
+              <p style={{ color: "#5A5A5A", fontSize: "12px", fontFamily: "var(--font-body)", margin: 0, lineHeight: 1.5 }}>
                 Complete Level {level.levelNumber - 1} to unlock this course.
               </p>
             </div>
@@ -158,19 +158,19 @@ export function LevelDetailSheet({ level, onClose }: LevelDetailSheetProps) {
             {level.schedule && (
               <div style={{ display: "flex", gap: "8px", alignItems: "flex-start" }}>
                 <CalendarDays size={12} color="#C8342E" style={{ flexShrink: 0, marginTop: 1 }} />
-                <p style={{ color: "#8D8D8D", fontSize: "11px", fontFamily: "Barlow, sans-serif", margin: 0, lineHeight: 1.5 }}>{level.schedule}</p>
+                <p style={{ color: "#8D8D8D", fontSize: "11px", fontFamily: "var(--font-body)", margin: 0, lineHeight: 1.5 }}>{level.schedule}</p>
               </div>
             )}
             {level.groupPrice && (
               <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                 <Users size={12} color="#C8342E" style={{ flexShrink: 0 }} />
-                <p style={{ color: "#8D8D8D", fontSize: "11px", fontFamily: "Barlow, sans-serif", margin: 0 }}>{level.groupPrice}</p>
+                <p style={{ color: "#8D8D8D", fontSize: "11px", fontFamily: "var(--font-body)", margin: 0 }}>{level.groupPrice}</p>
               </div>
             )}
             {level.prerequisite && (
               <div style={{ display: "flex", gap: "8px", alignItems: "flex-start" }}>
                 <Flag size={12} color="#5A5A5A" style={{ flexShrink: 0, marginTop: 1 }} />
-                <p style={{ color: "#5A5A5A", fontSize: "11px", fontFamily: "Barlow, sans-serif", margin: 0, lineHeight: 1.5 }}>{level.prerequisite}</p>
+                <p style={{ color: "#5A5A5A", fontSize: "11px", fontFamily: "var(--font-body)", margin: 0, lineHeight: 1.5 }}>{level.prerequisite}</p>
               </div>
             )}
 
@@ -179,9 +179,9 @@ export function LevelDetailSheet({ level, onClose }: LevelDetailSheetProps) {
               <div style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
                 {level.ageGroups.map((ag) => (
                   <div key={ag.label} style={{ flex: 1, backgroundColor: "rgba(200,52,46,0.07)", border: "1px solid rgba(200,52,46,0.18)", borderRadius: "9px", padding: "9px 11px" }}>
-                    <p style={{ color: "#C8342E", fontSize: "9px", fontFamily: "Barlow, sans-serif", fontWeight: 800, letterSpacing: "1.5px", textTransform: "uppercase", margin: "0 0 2px 0" }}>{ag.label}</p>
-                    <p style={{ color: "#FFFFFF", fontSize: "12px", fontFamily: "Barlow Condensed, sans-serif", fontWeight: 700, margin: "0 0 1px 0" }}>{ag.time}</p>
-                    <p style={{ color: "#5A5A5A", fontSize: "10px", fontFamily: "Barlow, sans-serif", margin: 0 }}>{ag.ages}</p>
+                    <p style={{ color: "#C8342E", fontSize: "9px", fontFamily: "var(--font-body)", fontWeight: 800, letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 2px 0" }}>{ag.label}</p>
+                    <p style={{ color: "#FFFFFF", fontSize: "12px", fontFamily: "var(--font-body)", fontWeight: 700, margin: "0 0 1px 0" }}>{ag.time}</p>
+                    <p style={{ color: "#5A5A5A", fontSize: "10px", fontFamily: "var(--font-body)", margin: 0 }}>{ag.ages}</p>
                   </div>
                 ))}
               </div>
@@ -194,10 +194,10 @@ export function LevelDetailSheet({ level, onClose }: LevelDetailSheetProps) {
           {/* Session count badge */}
           <div style={{ padding: "0 16px 10px" }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", backgroundColor: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "7px", padding: "5px 12px" }}>
-              <span style={{ color: "#C8342E", fontSize: "15px", fontFamily: "Barlow Condensed, sans-serif", fontWeight: 900 }}>
+              <span style={{ color: "#C8342E", fontSize: "15px", fontFamily: "var(--font-body)", fontWeight: 900 }}>
                 {level.status === "completed" ? level.totalSessions : `${level.completedSessions} / ${level.totalSessions}`}
               </span>
-              <span style={{ color: "#5A5A5A", fontSize: "9px", fontFamily: "Barlow, sans-serif", fontWeight: 700, letterSpacing: "1.5px", textTransform: "uppercase" }}>
+              <span style={{ color: "#5A5A5A", fontSize: "9px", fontFamily: "var(--font-body)", fontWeight: 700, letterSpacing: "0px", textTransform: "uppercase" }}>
                 {level.status === "completed" ? "Sessions Complete" : "Sessions"}
               </span>
             </div>
@@ -227,10 +227,10 @@ export function LevelDetailSheet({ level, onClose }: LevelDetailSheetProps) {
                         borderRadius: "8px",
                         color: activeCohort === idx ? "#FFFFFF" : "#5A5A5A",
                         fontSize: "11px",
-                        fontFamily: "Barlow, sans-serif",
+                        fontFamily: "var(--font-body)",
                         fontWeight: 700,
                         cursor: "pointer",
-                        letterSpacing: "0.5px",
+                        letterSpacing: "0px",
                       }}
                     >
                       {cohort.label}
@@ -250,7 +250,7 @@ export function LevelDetailSheet({ level, onClose }: LevelDetailSheetProps) {
               ) : (
                 <AlertTriangle size={12} color="#C8342E" style={{ flexShrink: 0, marginTop: 1 }} />
               )}
-              <p style={{ color: "#8D8D8D", fontSize: "11px", fontFamily: "Barlow, sans-serif", margin: 0, lineHeight: 1.55 }}>
+              <p style={{ color: "#8D8D8D", fontSize: "11px", fontFamily: "var(--font-body)", margin: 0, lineHeight: 1.55 }}>
                 {level.note.replace(/^[🏆⚠]\s*/, "")}
               </p>
             </div>

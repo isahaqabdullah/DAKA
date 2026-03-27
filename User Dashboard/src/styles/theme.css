@@ -126,6 +126,7 @@
 
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-body);
   }
 
   /**
@@ -145,6 +146,7 @@
   h6 {
     font-family: var(--font-heading);
     font-style: italic;
+    letter-spacing: 0;
   }
 
   h1 {
@@ -172,20 +174,35 @@
   }
 
   label {
+    font-family: var(--font-body);
     font-size: var(--text-base);
     font-weight: var(--font-weight-medium);
     line-height: 1.5;
   }
 
   button {
+    font-family: var(--font-body);
     font-size: var(--text-base);
     font-weight: var(--font-weight-medium);
     line-height: 1.5;
   }
 
   input {
+    font-family: var(--font-body);
     font-size: var(--text-base);
     font-weight: var(--font-weight-normal);
     line-height: 1.5;
+  }
+
+  textarea,
+  select {
+    font-family: var(--font-body);
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-normal);
+    line-height: 1.5;
+  }
+
+  [data-sonner-toaster] {
+    font-family: var(--font-body) !important;
   }
 }

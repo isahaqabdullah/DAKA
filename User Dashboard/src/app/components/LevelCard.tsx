@@ -148,7 +148,7 @@ export function LevelCard({
                 style={{
                   color: isActive ? "#FFFFFF" : isCompleted ? "#22C55E" : "#3A3A3A",
                   fontSize: "22px",
-                  fontFamily: "Barlow Condensed, sans-serif",
+                  fontFamily: "var(--font-body)",
                   fontWeight: 900,
                   lineHeight: 1,
                 }}
@@ -164,9 +164,9 @@ export function LevelCard({
               style={{
                 color: "#5A5A5A",
                 fontSize: "9px",
-                fontFamily: "Barlow, sans-serif",
+                fontFamily: "var(--font-body)",
                 fontWeight: 700,
-                letterSpacing: "2px",
+                letterSpacing: "0px",
                 textTransform: "uppercase",
                 margin: "0 0 1px 0",
               }}
@@ -180,7 +180,7 @@ export function LevelCard({
                 fontFamily: "var(--font-heading)",
                 fontStyle: "italic",
                 fontWeight: 800,
-                letterSpacing: "0.3px",
+                letterSpacing: "0px",
                 margin: "0 0 2px 0",
                 lineHeight: 1.1,
               }}
@@ -192,7 +192,7 @@ export function LevelCard({
                 style={{
                   color: isLocked ? "#2A2A2A" : "#4A4A4A",
                   fontSize: "10px",
-                  fontFamily: "Barlow, sans-serif",
+                  fontFamily: "var(--font-body)",
                   fontWeight: 500,
                   margin: "0 0 4px 0",
                   lineHeight: 1.4,
@@ -207,7 +207,7 @@ export function LevelCard({
                 style={{
                   color: isLocked ? "#2E2E2E" : "#CCCCCC",
                   fontSize: "14px",
-                  fontFamily: "Barlow Condensed, sans-serif",
+                  fontFamily: "var(--font-body)",
                   fontWeight: 800,
                   margin: 0,
                   lineHeight: 1,
@@ -219,7 +219,7 @@ export function LevelCard({
                 style={{
                   color: isLocked ? "#2A2A2A" : "#4A4A4A",
                   fontSize: "10px",
-                  fontFamily: "Barlow, sans-serif",
+                  fontFamily: "var(--font-body)",
                   margin: 0,
                 }}
               >
@@ -247,9 +247,9 @@ export function LevelCard({
                 style={{
                   color: cfg.color,
                   fontSize: "10px",
-                  fontFamily: "Barlow, sans-serif",
+                  fontFamily: "var(--font-body)",
                   fontWeight: 700,
-                  letterSpacing: "0.3px",
+                  letterSpacing: "0px",
                 }}
               >
                 {cfg.label}
@@ -289,7 +289,7 @@ export function LevelCard({
             {schedule && (
               <div style={{ display: "flex", gap: "9px", alignItems: "flex-start" }}>
                 <CalendarDays size={12} color="#C8342E" style={{ flexShrink: 0, marginTop: "1px" }} />
-                <p style={{ color: "#8D8D8D", fontSize: "11px", fontFamily: "Barlow, sans-serif", margin: 0, lineHeight: 1.5 }}>
+                <p style={{ color: "#8D8D8D", fontSize: "11px", fontFamily: "var(--font-body)", margin: 0, lineHeight: 1.5 }}>
                   {schedule}
                 </p>
               </div>
@@ -297,7 +297,7 @@ export function LevelCard({
             {groupPrice && (
               <div style={{ display: "flex", gap: "9px", alignItems: "center" }}>
                 <Users size={12} color="#C8342E" style={{ flexShrink: 0 }} />
-                <p style={{ color: "#8D8D8D", fontSize: "11px", fontFamily: "Barlow, sans-serif", margin: 0 }}>
+                <p style={{ color: "#8D8D8D", fontSize: "11px", fontFamily: "var(--font-body)", margin: 0 }}>
                   {groupPrice}
                 </p>
               </div>
@@ -305,7 +305,7 @@ export function LevelCard({
             {prerequisite && (
               <div style={{ display: "flex", gap: "9px", alignItems: "flex-start" }}>
                 <Flag size={12} color="#5A5A5A" style={{ flexShrink: 0, marginTop: "1px" }} />
-                <p style={{ color: "#5A5A5A", fontSize: "11px", fontFamily: "Barlow, sans-serif", margin: 0, lineHeight: 1.5 }}>
+                <p style={{ color: "#5A5A5A", fontSize: "11px", fontFamily: "var(--font-body)", margin: 0, lineHeight: 1.5 }}>
                   {prerequisite}
                 </p>
               </div>
@@ -325,13 +325,13 @@ export function LevelCard({
                       padding: "8px 10px",
                     }}
                   >
-                    <p style={{ color: "#C8342E", fontSize: "9px", fontFamily: "Barlow, sans-serif", fontWeight: 800, letterSpacing: "1.5px", textTransform: "uppercase", margin: "0 0 2px 0" }}>
+                    <p style={{ color: "#C8342E", fontSize: "9px", fontFamily: "var(--font-body)", fontWeight: 800, letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 2px 0" }}>
                       {ag.label}
                     </p>
-                    <p style={{ color: "#FFFFFF", fontSize: "11px", fontFamily: "Barlow Condensed, sans-serif", fontWeight: 700, margin: "0 0 1px 0" }}>
+                    <p style={{ color: "#FFFFFF", fontSize: "11px", fontFamily: "var(--font-body)", fontWeight: 700, margin: "0 0 1px 0" }}>
                       {ag.time}
                     </p>
-                    <p style={{ color: "#5A5A5A", fontSize: "10px", fontFamily: "Barlow, sans-serif", margin: 0 }}>
+                    <p style={{ color: "#5A5A5A", fontSize: "10px", fontFamily: "var(--font-body)", margin: 0 }}>
                       {ag.ages}
                     </p>
                   </div>
@@ -343,8 +343,8 @@ export function LevelCard({
           {/* Session count badge */}
           <div style={{ padding: "12px 15px 0" }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", backgroundColor: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "6px", padding: "4px 10px" }}>
-              <span style={{ color: "#C8342E", fontSize: "13px", fontFamily: "Barlow Condensed, sans-serif", fontWeight: 900 }}>{totalSessions}</span>
-              <span style={{ color: "#5A5A5A", fontSize: "9px", fontFamily: "Barlow, sans-serif", fontWeight: 700, letterSpacing: "1.5px", textTransform: "uppercase" }}>Sessions</span>
+              <span style={{ color: "#C8342E", fontSize: "13px", fontFamily: "var(--font-body)", fontWeight: 900 }}>{totalSessions}</span>
+              <span style={{ color: "#5A5A5A", fontSize: "9px", fontFamily: "var(--font-body)", fontWeight: 700, letterSpacing: "0px", textTransform: "uppercase" }}>Sessions</span>
             </div>
           </div>
 
@@ -371,10 +371,10 @@ export function LevelCard({
                       borderRadius: "7px",
                       color: activeCohort === idx ? "#FFFFFF" : "#5A5A5A",
                       fontSize: "11px",
-                      fontFamily: "Barlow, sans-serif",
+                      fontFamily: "var(--font-body)",
                       fontWeight: 700,
                       cursor: "pointer",
-                      letterSpacing: "0.5px",
+                      letterSpacing: "0px",
                     }}
                   >
                     {cohort.label}
@@ -414,7 +414,7 @@ export function LevelCard({
                 style={{
                   color: "#8D8D8D",
                   fontSize: "11px",
-                  fontFamily: "Barlow, sans-serif",
+                  fontFamily: "var(--font-body)",
                   margin: 0,
                   lineHeight: 1.55,
                 }}

@@ -72,8 +72,8 @@ export function RacingKid({ size = 70 }: { size?: number }) {
             fill="#C8342E"
             fontSize="13"
             fontWeight="900"
-            fontFamily="Barlow Condensed, sans-serif"
             letterSpacing="-0.5"
+            style={{ fontFamily: "var(--font-body)" }}
           >
             2
           </text>
