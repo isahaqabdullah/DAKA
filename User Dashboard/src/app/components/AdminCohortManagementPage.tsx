@@ -1,12 +1,16 @@
-import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
-import { ArrowLeft, FileText, Plus, X } from "lucide-react";
+import { useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import { ArrowLeft, FileText, Plus, User, UserPlus, X } from "lucide-react";
 import {
   ActionButton,
   ADMIN_THEME,
+  CohortSwitcher,
   SectionTitle,
   STORAGE_KEY,
   Surface,
+  createId,
   loadCohorts,
+  loadUnassignedStudents,
+  saveUnassignedStudents,
   type Cohort,
   type StudentPace,
   type StudentRecord,
@@ -42,18 +46,50 @@ const textareaStyle: CSSProperties = {
   fontFamily: "var(--font-body)",
 };
 
-function createId(prefix: string) {
-  return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
+type AssignmentFilter = "all" | "focused" | "unassigned";
+
+interface StudentManagementRow extends StudentRecord {
+  cohortId?: string;
+  cohortName: string;
+  reportCount: number;
 }
 
-function emptyStudentDraft() {
+function emptyStudentDraft(defaultCohortId = "") {
   return {
     name: "",
     age: "",
     guardian: "",
     pace: "Steady" as StudentPace,
     notes: "",
+    status: "active" as "active" | "withdrawn",
+    assignedCohortId: defaultCohortId,
   };
+}
+
+function buildStudentDraft(student: StudentManagementRow) {
+  return {
+    name: student.name,
+    age: student.age,
+    guardian: student.guardian,
+    pace: student.pace,
+    notes: student.notes,
+    status: student.status ?? "active",
+    assignedCohortId: student.cohortId ?? "",
+  };
+}
+
+function attendanceRate(student: StudentRecord, totalClasses: number): string {
+  if (totalClasses === 0) return "No sessions yet";
+  const nonPending = Object.values(student.attendance).filter((state) => state !== "pending").length;
+  const pct = Math.round((nonPending / totalClasses) * 100);
+  return `${nonPending}/${totalClasses} tracked · ${pct}%`;
+}
+
+function createAttendanceMap(cohort: Cohort): StudentRecord["attendance"] {
+  return cohort.classes.reduce<StudentRecord["attendance"]>((map, session) => {
+    map[session.id] = "pending";
+    return map;
+  }, {});
 }
 
 function FieldLabel({ children }: { children: ReactNode }) {
@@ -129,1057 +165,983 @@ function pacePillStyle(pace: StudentPace): CSSProperties {
   };
 }
 
-function attendanceBreakdown(student: StudentRecord) {
-  const counts = Object.values(student.attendance).reduce(
-    (summary, status) => {
-      summary[status] += 1;
-      return summary;
-    },
-    { pending: 0, present: 0, late: 0, absent: 0 },
-  );
-
-  const parts = ([
-    ["present", "present"],
-    ["late", "late"],
-    ["absent", "absent"],
-    ["pending", "pending"],
-  ] as const)
-    .filter(([status]) => counts[status] > 0)
-    .map(([status, label]) => `${counts[status]} ${label}`);
-
-  return parts.length > 0 ? parts.join(" · ") : "No attendance registered yet";
-}
-
-interface AdminCohortManagementPageProps {
+interface AdminStudentManagementPageProps {
   initialCohortId?: string;
+  onOpenReports?: (cohortId: string, studentId?: string) => void;
+  onSelectCohort?: (cohortId: string) => void;
   onBackToCohortDashboard?: (cohortId: string) => void;
+  onBackToLanding?: () => void;
 }
 
-export function AdminCohortManagementPage({
+export function AdminStudentManagementPage({
   initialCohortId,
+  onOpenReports,
+  onSelectCohort,
   onBackToCohortDashboard,
-}: AdminCohortManagementPageProps) {
+  onBackToLanding,
+}: AdminStudentManagementPageProps) {
   const [cohorts, setCohorts] = useState<Cohort[]>(() => loadCohorts());
-  const [selectedCohortId, setSelectedCohortId] = useState(() => initialCohortId ?? loadCohorts()[0]?.id ?? "");
-  const [studentDraft, setStudentDraft] = useState(() => emptyStudentDraft());
+  const [unassignedStudents, setUnassignedStudents] = useState<StudentRecord[]>(() => loadUnassignedStudents());
+  const [focusedCohortId, setFocusedCohortId] = useState(() => initialCohortId ?? loadCohorts().find((cohort) => !cohort.archived)?.id ?? "");
+  const [assignmentFilter, setAssignmentFilter] = useState<AssignmentFilter>("all");
   const [studentSearch, setStudentSearch] = useState("");
-  const [isRosterEditMode, setIsRosterEditMode] = useState(false);
-  const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
+  const [paceFilter, setPaceFilter] = useState<"all" | StudentPace>("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "withdrawn">("all");
+  const [studentDraft, setStudentDraft] = useState(() => emptyStudentDraft(initialCohortId ?? loadCohorts().find((cohort) => !cohort.archived)?.id ?? ""));
+  const [isAddStudentModalOpen, setIsAddStudentModalOpen] = useState(false);
+  const [editingStudentContext, setEditingStudentContext] = useState<{ studentId: string; sourceCohortId: string | null } | null>(null);
   const [editingStudentDraft, setEditingStudentDraft] = useState(() => emptyStudentDraft());
-  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
-  const [reportModalStudentId, setReportModalStudentId] = useState<string | null>(null);
-  const [newReport, setNewReport] = useState({
-    studentId: "",
-    title: "",
-    summary: "",
-    recommendation: "",
-  });
+  const [studentModalMode, setStudentModalMode] = useState<"view" | "edit">("view");
 
-  const selectedCohort = cohorts.find((cohort) => cohort.id === selectedCohortId) ?? cohorts[0];
+  const activeCohorts = cohorts.filter((cohort) => !cohort.archived);
+  const focusedCohort = activeCohorts.find((cohort) => cohort.id === focusedCohortId) ?? activeCohorts[0];
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cohorts));
   }, [cohorts]);
 
   useEffect(() => {
-    if (initialCohortId && cohorts.some((cohort) => cohort.id === initialCohortId)) {
-      setSelectedCohortId(initialCohortId);
-    }
-  }, [cohorts, initialCohortId]);
+    saveUnassignedStudents(unassignedStudents);
+  }, [unassignedStudents]);
 
   useEffect(() => {
-    if (!selectedCohort) {
+    if (initialCohortId && activeCohorts.some((cohort) => cohort.id === initialCohortId)) {
+      setFocusedCohortId(initialCohortId);
       return;
     }
 
-    setSelectedStudentId((current) =>
-      current && selectedCohort.students.some((student) => student.id === current) ? current : null,
-    );
-    setReportModalStudentId((current) =>
-      current && selectedCohort.students.some((student) => student.id === current) ? current : null,
-    );
-    setNewReport((current) => ({
-      ...current,
-      studentId:
-        current.studentId && selectedCohort.students.some((student) => student.id === current.studentId)
-          ? current.studentId
-          : selectedCohort.students[0]?.id ?? "",
-    }));
-  }, [selectedCohort]);
+    if (!focusedCohortId && activeCohorts[0]) {
+      setFocusedCohortId(activeCohorts[0].id);
+    }
+  }, [activeCohorts, focusedCohortId, initialCohortId]);
+
+  useEffect(() => {
+    if (focusedCohort) {
+      onSelectCohort?.(focusedCohort.id);
+    }
+  }, [focusedCohort, onSelectCohort]);
+
+  const allStudents = useMemo<StudentManagementRow[]>(
+    () => [
+      ...cohorts.flatMap((cohort) =>
+        cohort.students.map((student) => ({
+          ...student,
+          cohortId: cohort.id,
+          cohortName: cohort.name,
+          reportCount: cohort.reports.filter((report) => report.studentId === student.id).length,
+        })),
+      ),
+      ...unassignedStudents.map((student) => ({
+        ...student,
+        cohortId: undefined,
+        cohortName: "Not Assigned",
+        reportCount: 0,
+      })),
+    ],
+    [cohorts, unassignedStudents],
+  );
+
+  const totalStudents = allStudents.length;
+  const unassignedCount = allStudents.filter((student) => !student.cohortId).length;
+  const assignedCount = totalStudents - unassignedCount;
+  const withdrawnCount = allStudents.filter((student) => (student.status ?? "active") === "withdrawn").length;
+
+  const normalizedStudentSearch = studentSearch.trim().toLowerCase();
+  const hasActiveFilters =
+    normalizedStudentSearch.length > 0 ||
+    assignmentFilter !== "all" ||
+    paceFilter !== "all" ||
+    statusFilter !== "all";
+  const filteredStudents = allStudents
+    .filter((student) => {
+      const matchesSearch =
+        !normalizedStudentSearch ||
+        [student.name, student.guardian, student.pace, student.age, student.notes, student.cohortName]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedStudentSearch);
+      const matchesStatus = statusFilter === "all" || (student.status ?? "active") === statusFilter;
+      const matchesPace = paceFilter === "all" || student.pace === paceFilter;
+      const matchesAssignment =
+        assignmentFilter === "all"
+          ? true
+          : assignmentFilter === "unassigned"
+            ? !student.cohortId
+            : focusedCohort
+              ? student.cohortId === focusedCohort.id
+              : false;
+
+      return matchesSearch && matchesStatus && matchesPace && matchesAssignment;
+    })
+    .sort((left, right) => {
+      if (Boolean(left.cohortId) !== Boolean(right.cohortId)) {
+        return left.cohortId ? 1 : -1;
+      }
+
+      if ((left.status ?? "active") !== (right.status ?? "active")) {
+        return (left.status ?? "active") === "active" ? -1 : 1;
+      }
+
+      if (left.cohortName !== right.cohortName) {
+        return left.cohortName.localeCompare(right.cohortName);
+      }
+
+      return left.name.localeCompare(right.name);
+    });
+
+  const editingStudent = editingStudentContext
+    ? allStudents.find((student) => student.id === editingStudentContext.studentId)
+    : undefined;
+  const editingStudentSourceCohort = editingStudent?.cohortId
+    ? cohorts.find((cohort) => cohort.id === editingStudent.cohortId)
+    : undefined;
+  const editingStudentAttendanceSummary = editingStudent
+    ? editingStudent.cohortId
+      ? attendanceRate(editingStudent, editingStudentSourceCohort?.classes.length ?? 0)
+      : "Awaiting cohort assignment"
+    : "";
+
+  function updateFocusCohort(cohortId: string) {
+    setFocusedCohortId(cohortId);
+  }
+
+  function clearFilters() {
+    setStudentSearch("");
+    setAssignmentFilter("all");
+    setPaceFilter("all");
+    setStatusFilter("all");
+  }
+
+  function commitCohorts(nextCohorts: Cohort[]) {
+    setCohorts(nextCohorts);
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextCohorts));
+  }
+
+  function commitUnassignedStudents(nextStudents: StudentRecord[]) {
+    setUnassignedStudents(nextStudents);
+    saveUnassignedStudents(nextStudents);
+  }
+
+  function commitAll(nextCohorts: Cohort[], nextUnassignedStudents: StudentRecord[]) {
+    commitCohorts(nextCohorts);
+    commitUnassignedStudents(nextUnassignedStudents);
+  }
 
   function resetStudentForm() {
-    setStudentDraft(emptyStudentDraft());
+    setStudentDraft(emptyStudentDraft(focusedCohort?.id ?? ""));
   }
 
   function handleCloseStudentEditModal() {
-    setEditingStudentId(null);
-    setEditingStudentDraft(emptyStudentDraft());
+    setEditingStudentContext(null);
+    setEditingStudentDraft(emptyStudentDraft(focusedCohort?.id ?? ""));
+    setStudentModalMode("view");
   }
 
-  function handleToggleRosterEditMode() {
-    const nextEditMode = !isRosterEditMode;
-    setIsRosterEditMode(nextEditMode);
-
-    if (!nextEditMode) {
-      handleCloseStudentEditModal();
-    }
+  function handleOpenAddStudentModal() {
+    setStudentDraft(emptyStudentDraft(focusedCohort?.id ?? ""));
+    setIsAddStudentModalOpen(true);
   }
 
-  function updateSelectedCohort(mutator: (cohort: Cohort) => Cohort) {
-    if (!selectedCohort) {
+  function handleBack() {
+    if (focusedCohort && onBackToCohortDashboard) {
+      onBackToCohortDashboard(focusedCohort.id);
       return;
     }
 
-    setCohorts((current) =>
-      current.map((cohort) => (cohort.id === selectedCohort.id ? mutator(cohort) : cohort)),
-    );
+    onBackToLanding?.();
   }
 
   function handleStudentSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!selectedCohort || !studentDraft.name.trim()) {
+    if (!studentDraft.name.trim()) {
       return;
     }
 
-    const trimmedStudent = {
+    const targetCohort = activeCohorts.find((cohort) => cohort.id === studentDraft.assignedCohortId);
+    const nextStudent: StudentRecord = {
+      id: createId("student"),
       name: studentDraft.name.trim(),
       age: studentDraft.age.trim() || "TBC",
       guardian: studentDraft.guardian.trim() || "Pending",
       pace: studentDraft.pace,
       notes: studentDraft.notes.trim(),
+      status: studentDraft.status,
+      attendance: targetCohort ? createAttendanceMap(targetCohort) : {},
     };
 
-    const attendance = selectedCohort.classes.reduce<StudentRecord["attendance"]>((map, session) => {
-      map[session.id] = "pending";
-      return map;
-    }, {});
-
-    updateSelectedCohort((cohort) => ({
-      ...cohort,
-      students: [
-        ...cohort.students,
-        {
-          id: createId("student"),
-          ...trimmedStudent,
-          attendance,
-        },
-      ],
-    }));
+    if (targetCohort) {
+      commitCohorts(
+        cohorts.map((cohort) =>
+          cohort.id === targetCohort.id
+            ? { ...cohort, students: [...cohort.students, nextStudent] }
+            : cohort,
+        ),
+      );
+      updateFocusCohort(targetCohort.id);
+    } else {
+      commitUnassignedStudents([...unassignedStudents, nextStudent]);
+    }
 
     resetStudentForm();
+    setIsAddStudentModalOpen(false);
   }
 
-  function handleStudentEdit(student: StudentRecord) {
-    setReportModalStudentId(null);
-    setSelectedStudentId(student.id);
-    setEditingStudentId(student.id);
-    setEditingStudentDraft({
-      name: student.name,
-      age: student.age,
-      guardian: student.guardian,
-      pace: student.pace,
-      notes: student.notes,
+  function handleStudentEdit(student: StudentManagementRow) {
+    setEditingStudentContext({
+      studentId: student.id,
+      sourceCohortId: student.cohortId ?? null,
     });
+    setEditingStudentDraft(buildStudentDraft(student));
+    setStudentModalMode("view");
+  }
+
+  function handleStartStudentEdit() {
+    if (!editingStudent) {
+      return;
+    }
+
+    setEditingStudentContext({
+      studentId: editingStudent.id,
+      sourceCohortId: editingStudent.cohortId ?? null,
+    });
+    setEditingStudentDraft(buildStudentDraft(editingStudent));
+    setStudentModalMode("edit");
   }
 
   function handleStudentEditSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!selectedCohort || !editingStudentId || !editingStudentDraft.name.trim()) {
+    if (!editingStudentContext || !editingStudentDraft.name.trim()) {
       return;
     }
 
-    const trimmedStudent = {
+    const sourceCohortId = editingStudentContext.sourceCohortId;
+    const targetCohortId = editingStudentDraft.assignedCohortId || null;
+    const sourceCohort = sourceCohortId ? cohorts.find((cohort) => cohort.id === sourceCohortId) : undefined;
+    const targetCohort = targetCohortId ? activeCohorts.find((cohort) => cohort.id === targetCohortId) : undefined;
+    const reportCount = sourceCohort?.reports.filter((report) => report.studentId === editingStudentContext.studentId).length ?? 0;
+    const changingAssignment = sourceCohortId !== targetCohortId;
+
+    if (
+      changingAssignment &&
+      reportCount > 0 &&
+      typeof window !== "undefined" &&
+      !window.confirm(
+        `Moving ${editingStudentDraft.name.trim()} will remove ${reportCount} linked report${reportCount === 1 ? "" : "s"} from the current cohort. Continue?`,
+      )
+    ) {
+      return;
+    }
+
+    const baseStudent = {
       name: editingStudentDraft.name.trim(),
       age: editingStudentDraft.age.trim() || "TBC",
       guardian: editingStudentDraft.guardian.trim() || "Pending",
       pace: editingStudentDraft.pace,
       notes: editingStudentDraft.notes.trim(),
+      status: editingStudentDraft.status,
     };
 
-    updateSelectedCohort((cohort) => ({
-      ...cohort,
-      students: cohort.students.map((student) =>
-        student.id === editingStudentId
-          ? {
-              ...student,
-              ...trimmedStudent,
-            }
-          : student,
-      ),
-    }));
+    if (!changingAssignment) {
+      if (sourceCohortId) {
+        commitCohorts(
+          cohorts.map((cohort) =>
+            cohort.id === sourceCohortId
+              ? {
+                  ...cohort,
+                  students: cohort.students.map((student) =>
+                    student.id === editingStudentContext.studentId
+                      ? { ...student, ...baseStudent }
+                      : student,
+                  ),
+                }
+              : cohort,
+          ),
+        );
+      } else {
+        commitUnassignedStudents(
+          unassignedStudents.map((student) =>
+            student.id === editingStudentContext.studentId
+              ? { ...student, ...baseStudent }
+              : student,
+          ),
+        );
+      }
 
-    setSelectedStudentId(editingStudentId);
-    handleCloseStudentEditModal();
-  }
-
-  function handleStudentDelete(student: StudentRecord) {
-    const relatedReports = selectedCohort?.reports.filter((report) => report.studentId === student.id).length ?? 0;
-    const confirmationMessage =
-      relatedReports > 0
-        ? `Delete ${student.name} and ${relatedReports} related report${relatedReports === 1 ? "" : "s"}?`
-        : `Delete ${student.name} from this cohort?`;
-
-    if (typeof window !== "undefined" && !window.confirm(confirmationMessage)) {
+      setStudentModalMode("view");
       return;
     }
 
-    updateSelectedCohort((cohort) => ({
-      ...cohort,
-      students: cohort.students.filter((entry) => entry.id !== student.id),
-      reports: cohort.reports.filter((report) => report.studentId !== student.id),
-    }));
+    const studentForMove = allStudents.find((student) => student.id === editingStudentContext.studentId);
 
-    if (editingStudentId === student.id) {
+    if (!studentForMove) {
+      return;
+    }
+
+    const movedStudent: StudentRecord = {
+      id: studentForMove.id,
+      ...baseStudent,
+      attendance: targetCohort ? createAttendanceMap(targetCohort) : {},
+    };
+
+    const nextCohorts = cohorts.map((cohort) => {
+      if (cohort.id === sourceCohortId) {
+        return {
+          ...cohort,
+          students: cohort.students.filter((student) => student.id !== editingStudentContext.studentId),
+          reports: cohort.reports.filter((report) => report.studentId !== editingStudentContext.studentId),
+        };
+      }
+
+      if (targetCohort && cohort.id === targetCohort.id) {
+        return {
+          ...cohort,
+          students: [...cohort.students, movedStudent],
+        };
+      }
+
+      return cohort;
+    });
+
+    let nextUnassignedStudents = unassignedStudents.filter((student) => student.id !== editingStudentContext.studentId);
+
+    if (!sourceCohortId && !targetCohort) {
+      nextUnassignedStudents = unassignedStudents.map((student) =>
+        student.id === editingStudentContext.studentId ? movedStudent : student,
+      );
+    } else if (!targetCohort) {
+      nextUnassignedStudents = [...nextUnassignedStudents, movedStudent];
+    }
+
+    commitAll(nextCohorts, nextUnassignedStudents);
+
+    if (targetCohort) {
+      updateFocusCohort(targetCohort.id);
+    }
+
+    setStudentModalMode("view");
+  }
+
+  function handleStudentDelete(student: StudentManagementRow) {
+    const reportCount = student.cohortId
+      ? cohorts.find((cohort) => cohort.id === student.cohortId)?.reports.filter((report) => report.studentId === student.id).length ?? 0
+      : 0;
+    const confirmationMessage =
+      reportCount > 0
+        ? `Delete ${student.name} and ${reportCount} linked report${reportCount === 1 ? "" : "s"}?`
+        : student.cohortId
+          ? `Delete ${student.name} from ${student.cohortName}?`
+          : `Delete ${student.name} from the unassigned list?`;
+
+    if (typeof window !== "undefined" && !window.confirm(confirmationMessage)) {
+      return false;
+    }
+
+    if (!student.cohortId) {
+      commitUnassignedStudents(unassignedStudents.filter((entry) => entry.id !== student.id));
+      if (editingStudentContext?.studentId === student.id) {
+        handleCloseStudentEditModal();
+      }
+      return true;
+    }
+
+    commitCohorts(
+      cohorts.map((cohort) =>
+        cohort.id === student.cohortId
+          ? {
+              ...cohort,
+              students: cohort.students.filter((entry) => entry.id !== student.id),
+              reports: cohort.reports.filter((report) => report.studentId !== student.id),
+            }
+          : cohort,
+      ),
+    );
+
+    if (editingStudentContext?.studentId === student.id) {
       handleCloseStudentEditModal();
     }
 
-    if (selectedStudentId === student.id) {
-      setSelectedStudentId(null);
-    }
-
-    if (reportModalStudentId === student.id) {
-      setReportModalStudentId(null);
-    }
-
-    setNewReport((current) => ({
-      ...current,
-      studentId: current.studentId === student.id ? "" : current.studentId,
-    }));
+    return true;
   }
 
-  function handleReportSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!selectedCohort || !newReport.studentId || !newReport.title.trim() || !newReport.summary.trim()) {
-      return;
-    }
-
-    updateSelectedCohort((cohort) => ({
-      ...cohort,
-      reports: [
-        {
-          id: createId("report"),
-          studentId: newReport.studentId,
-          title: newReport.title.trim(),
-          summary: newReport.summary.trim(),
-          recommendation: newReport.recommendation.trim(),
-          createdAt: new Date().toISOString(),
-        },
-        ...cohort.reports,
-      ],
-    }));
-
-    setSelectedStudentId(newReport.studentId);
-    setReportModalStudentId(null);
-    setNewReport((current) => ({
-      ...current,
-      title: "",
-      summary: "",
-      recommendation: "",
-    }));
-  }
-
-  function handleStartReport(student: StudentRecord) {
-    setSelectedStudentId(student.id);
-    setReportModalStudentId(student.id);
-    setNewReport({
-      studentId: student.id,
-      title: `${student.name.split(" ")[0]} progress report`,
-      summary: "",
-      recommendation: "",
-    });
-  }
-
-  function handleCloseReportModal() {
-    setReportModalStudentId(null);
-    setNewReport((current) => ({
-      ...current,
-      title: "",
-      summary: "",
-      recommendation: "",
-    }));
-  }
-
-  if (!selectedCohort) {
+  if (!focusedCohort && activeCohorts.length === 0) {
     return null;
   }
-
-  const availableSeats = Math.max(selectedCohort.capacity - selectedCohort.students.length, 0);
-  const editingStudent = selectedCohort.students.find((student) => student.id === editingStudentId);
-  const reportModalStudent = selectedCohort.students.find((student) => student.id === reportModalStudentId);
-  const normalizedStudentSearch = studentSearch.trim().toLowerCase();
-  const filteredStudents = normalizedStudentSearch
-    ? selectedCohort.students.filter((student) =>
-        [
-          student.name,
-          student.guardian,
-          student.pace,
-          student.age,
-          student.notes,
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(normalizedStudentSearch),
-      )
-    : selectedCohort.students;
 
   return (
     <>
       <style>{`
-        .cohort-management-grid {
+        .student-management-grid {
           display: grid;
           gap: 14px;
         }
-        .cohort-management-two-up {
-          display: grid;
-          grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
-          gap: 12px;
-          align-items: start;
-        }
-        .cohort-management-form-grid {
+        .student-management-form-grid {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 10px;
         }
-        .cohort-management-full-span {
+        .student-management-list-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 10px;
+          align-items: center;
+        }
+        .student-management-full-span {
           grid-column: 1 / -1;
         }
         @media (max-width: 1120px) {
-          .cohort-management-two-up,
-          .cohort-management-form-grid {
+          .student-management-form-grid {
             grid-template-columns: 1fr;
+          }
+        }
+        @media (max-width: 760px) {
+          .student-management-list-row {
+            grid-template-columns: 1fr;
+            align-items: start;
           }
         }
       `}</style>
 
-      <div className="cohort-management-grid">
-        <Surface
-          accent
-          style={{
-            padding: "18px",
-            background:
-              "radial-gradient(circle at top right, rgba(200,52,46,0.18), transparent 30%), linear-gradient(135deg, #FFFFFF 0%, #F8F4EF 100%)",
-          }}
-        >
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              background:
-                "repeating-linear-gradient(120deg, transparent 0, transparent 18px, rgba(200,52,46,0.025) 18px, rgba(200,52,46,0.025) 20px)",
-              pointerEvents: "none",
-            }}
-          />
-
-          <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", flexWrap: "wrap", position: "relative" }}>
-            <div style={{ maxWidth: "760px", display: "grid", gap: "10px" }}>
-              {onBackToCohortDashboard ? (
-                <div style={{ display: "flex", justifyContent: "flex-start" }}>
-                  <ActionButton
-                    secondary
-                    onClick={() => onBackToCohortDashboard(selectedCohort.id)}
-                    style={{ minWidth: "186px", minHeight: "40px" }}
+      <div className="student-management-grid">
+        <Surface style={{ padding: "18px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: "14px", flexWrap: "wrap", alignItems: "flex-start" }}>
+            <div style={{ maxWidth: "820px", display: "grid", gap: "10px" }}>
+              <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "flex-start" }}>
+                {onBackToCohortDashboard || onBackToLanding ? (
+                  <button
+                    type="button"
+                    onClick={handleBack}
+                    style={{
+                      width: "36px",
+                      height: "36px",
+                      borderRadius: "12px",
+                      border: `1px solid ${ADMIN_THEME.border}`,
+                      backgroundColor: ADMIN_THEME.surface,
+                      color: ADMIN_THEME.heading,
+                      display: "grid",
+                      placeItems: "center",
+                      cursor: "pointer",
+                      flexShrink: 0,
+                    }}
                   >
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                      <ArrowLeft size={14} /> Back To Cohort Dashboard
-                    </span>
-                  </ActionButton>
+                    <ArrowLeft size={16} />
+                  </button>
+                ) : null}
+                <div style={{ display: "grid", gap: "10px", flex: "1 1 420px" }}>
+                  <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
+                    <SectionTitle
+                      eyebrow="Student Desk"
+                      title="All Students"
+                      detail="Add, edit, delete, assign, or hold students as not assigned until placement is decided."
+                      titleStyle={{ fontSize: "24px" }}
+                    />
+                    {focusedCohort ? (
+                      <CohortSwitcher cohorts={activeCohorts} selectedCohortId={focusedCohort.id} onSelect={updateFocusCohort} />
+                    ) : null}
+                  </div>
                 </div>
-              ) : null}
-
-              <SectionTitle
-                eyebrow="Cohort Management"
-                title={selectedCohort.name}
-                detail={selectedCohort.program}
-                titleStyle={{ fontSize: "24px" }}
-              />
-
-              <p style={{ color: ADMIN_THEME.muted, fontSize: "13px", lineHeight: 1.5, margin: "0 0 4px 0", maxWidth: "640px" }}>
-                Move enrollment and roster maintenance into one focused workspace. Add new students, update profiles,
-                and remove archived records here so the main cohort dashboard stays operational instead of overloaded.
-              </p>
-
+              </div>
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                <span
-                  style={{
-                    padding: "7px 10px",
-                    borderRadius: "999px",
-                    border: `1px solid ${ADMIN_THEME.accentBorder}`,
-                    backgroundColor: ADMIN_THEME.accentBg,
-                    color: ADMIN_THEME.accent,
-                    fontSize: "11px",
-                    letterSpacing: "0px",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {selectedCohort.cadence}
+                <span style={{ padding: "7px 10px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.accentBorder}`, backgroundColor: ADMIN_THEME.accentBg, color: ADMIN_THEME.accent, fontSize: "11px", textTransform: "uppercase" }}>
+                  {totalStudents} total students
                 </span>
-                <span
-                  style={{
-                    padding: "7px 10px",
-                    borderRadius: "999px",
-                    border: `1px solid ${ADMIN_THEME.border}`,
-                    backgroundColor: ADMIN_THEME.surfaceSoft,
-                    color: ADMIN_THEME.muted,
-                    fontSize: "11px",
-                    letterSpacing: "0px",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {selectedCohort.room}
+                <span style={{ padding: "7px 10px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.border}`, backgroundColor: ADMIN_THEME.surfaceSoft, color: ADMIN_THEME.muted, fontSize: "11px", textTransform: "uppercase" }}>
+                  {assignedCount} assigned
                 </span>
-                <span
-                  style={{
-                    padding: "7px 10px",
-                    borderRadius: "999px",
-                    border: `1px solid ${ADMIN_THEME.border}`,
-                    backgroundColor: ADMIN_THEME.surfaceSoft,
-                    color: ADMIN_THEME.muted,
-                    fontSize: "11px",
-                    letterSpacing: "0px",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {selectedCohort.students.length} active students
+                <span style={{ padding: "7px 10px", borderRadius: "999px", border: `1px solid rgba(245,158,11,0.22)`, backgroundColor: "rgba(245,158,11,0.12)", color: "#9D6100", fontSize: "11px", textTransform: "uppercase" }}>
+                  {unassignedCount} not assigned
                 </span>
-                <span
-                  style={{
-                    padding: "7px 10px",
-                    borderRadius: "999px",
-                    border: `1px solid ${ADMIN_THEME.border}`,
-                    backgroundColor: ADMIN_THEME.surfaceSoft,
-                    color: ADMIN_THEME.muted,
-                    fontSize: "11px",
-                    letterSpacing: "0px",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  {selectedCohort.reports.length} reports
+                <span style={{ padding: "7px 10px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.border}`, backgroundColor: ADMIN_THEME.surfaceSoft, color: ADMIN_THEME.muted, fontSize: "11px", textTransform: "uppercase" }}>
+                  {withdrawnCount} withdrawn
                 </span>
               </div>
             </div>
 
-            <div
-              style={{
-                minWidth: "228px",
-                padding: "12px",
-                borderRadius: "16px",
-                border: `1px solid ${ADMIN_THEME.border}`,
-                background: "linear-gradient(180deg, #FFFFFF 0%, #F7F2ED 100%)",
-                boxShadow: "0 12px 30px rgba(70,46,25,0.08)",
-              }}
-            >
-              <p style={{ color: ADMIN_THEME.subtle, fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 6px 0" }}>
-                Management Focus
-              </p>
-              <h3 style={{ color: ADMIN_THEME.heading, fontSize: "20px", fontFamily: "var(--font-heading)", margin: "0 0 4px 0", lineHeight: 1 }}>
-                STUDENT ROSTER
-              </h3>
-              <p style={{ color: ADMIN_THEME.muted, fontSize: "12px", lineHeight: 1.45, margin: "0 0 8px 0" }}>
-                Keep enrollment, guardian details, pace bands, and coach notes clean in one place.
-              </p>
-              <p style={{ color: ADMIN_THEME.subtle, fontSize: "12px", margin: 0 }}>
-                {availableSeats > 0
-                  ? `${availableSeats} seats still available in this cohort.`
-                  : "This cohort is currently at capacity."}
-              </p>
+            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+              <ActionButton onClick={handleOpenAddStudentModal} style={{ minWidth: "148px", minHeight: "40px" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                  <Plus size={14} /> Add Student
+                </span>
+              </ActionButton>
             </div>
           </div>
         </Surface>
 
-        <div className="cohort-management-two-up">
-          <Surface style={{ padding: "16px", alignSelf: "start" }}>
+        {isAddStudentModalOpen ? (
+          <div
+            style={{ position: "fixed", inset: 0, backgroundColor: "rgba(43,31,22,0.40)", backdropFilter: "blur(4px)", zIndex: 200, display: "grid", placeItems: "center", padding: "24px" }}
+            onClick={() => {
+              setIsAddStudentModalOpen(false);
+              resetStudentForm();
+            }}
+          >
+            <div
+              style={{ backgroundColor: ADMIN_THEME.surface, borderRadius: "20px", padding: "24px", width: "100%", maxWidth: "560px", boxShadow: "0 24px 56px rgba(43,31,22,0.20)" }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
+                <SectionTitle eyebrow="Enrollment" title="Add Student" subdetail="Choose a cohort now or leave the student unassigned." titleStyle={{ fontSize: "20px" }} />
+                <button type="button" onClick={() => { setIsAddStudentModalOpen(false); resetStudentForm(); }} style={{ background: "none", border: "none", cursor: "pointer", padding: "4px", color: ADMIN_THEME.subtle }}>
+                  <X size={20} />
+                </button>
+              </div>
+
+              <form onSubmit={handleStudentSubmit} className="student-management-form-grid">
+                <div>
+                  <FieldLabel>Student Name</FieldLabel>
+                  <FieldShell>
+                    <input value={studentDraft.name} onChange={(event) => setStudentDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Enter full name" style={inputStyle} />
+                  </FieldShell>
+                </div>
+                <div>
+                  <FieldLabel>Assign to Cohort</FieldLabel>
+                  <FieldShell>
+                    <select value={studentDraft.assignedCohortId} onChange={(event) => setStudentDraft((current) => ({ ...current, assignedCohortId: event.target.value }))} style={inputStyle}>
+                      <option value="">Not assigned</option>
+                      {activeCohorts.map((cohort) => (
+                        <option key={cohort.id} value={cohort.id}>
+                          {cohort.name}
+                        </option>
+                      ))}
+                    </select>
+                  </FieldShell>
+                </div>
+                <div>
+                  <FieldLabel>Age</FieldLabel>
+                  <FieldShell>
+                    <input value={studentDraft.age} onChange={(event) => setStudentDraft((current) => ({ ...current, age: event.target.value }))} placeholder="12" style={inputStyle} />
+                  </FieldShell>
+                </div>
+                <div>
+                  <FieldLabel>Guardian</FieldLabel>
+                  <FieldShell>
+                    <input value={studentDraft.guardian} onChange={(event) => setStudentDraft((current) => ({ ...current, guardian: event.target.value }))} placeholder="Parent or guardian" style={inputStyle} />
+                  </FieldShell>
+                </div>
+                <div className="student-management-full-span">
+                  <FieldLabel>Coach Notes</FieldLabel>
+                  <FieldShell>
+                    <textarea value={studentDraft.notes} onChange={(event) => setStudentDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Add a quick note about confidence, support areas, or goals." style={textareaStyle} />
+                  </FieldShell>
+                </div>
+                <div className="student-management-full-span" style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
+                  <ActionButton secondary type="button" onClick={() => { setIsAddStudentModalOpen(false); resetStudentForm(); }} style={{ minWidth: "100px" }}>
+                    Cancel
+                  </ActionButton>
+                  <ActionButton type="submit" style={{ minWidth: "150px" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                      <UserPlus size={14} /> Save Student
+                    </span>
+                  </ActionButton>
+                </div>
+              </form>
+            </div>
+          </div>
+        ) : null}
+
+        {editingStudentContext && editingStudent ? (
+          <div
+            style={{ position: "fixed", inset: 0, backgroundColor: "rgba(43,31,22,0.40)", backdropFilter: "blur(4px)", zIndex: 200, display: "grid", placeItems: "center", padding: "24px" }}
+            onClick={handleCloseStudentEditModal}
+          >
+            <div
+              style={{ backgroundColor: ADMIN_THEME.surface, borderRadius: "20px", padding: "24px", width: "100%", maxWidth: "640px", boxShadow: "0 24px 56px rgba(43,31,22,0.20)" }}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "16px" }}>
+                <SectionTitle eyebrow="Student Record" title={editingStudent.name} subdetail={editingStudent.cohortId ? editingStudent.cohortName : "Not assigned"} titleStyle={{ fontSize: "20px" }} />
+                <button type="button" onClick={handleCloseStudentEditModal} style={{ background: "none", border: "none", cursor: "pointer", padding: "4px", color: ADMIN_THEME.subtle }}>
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div style={{ display: "grid", gap: "10px", padding: "14px", borderRadius: "16px", marginBottom: "16px", ...nestedCardStyle }}>
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+                  <span style={pacePillStyle(editingStudent.pace)}>{editingStudent.pace}</span>
+                  <span
+                    style={{
+                      padding: "4px 8px",
+                      borderRadius: "999px",
+                      border: editingStudent.cohortId ? `1px solid ${ADMIN_THEME.border}` : "1px solid rgba(245,158,11,0.22)",
+                      backgroundColor: editingStudent.cohortId ? ADMIN_THEME.surface : "rgba(245,158,11,0.12)",
+                      color: editingStudent.cohortId ? ADMIN_THEME.subtle : "#9D6100",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {editingStudent.cohortName}
+                  </span>
+                  {(editingStudent.status ?? "active") === "withdrawn" ? (
+                    <span style={{ padding: "4px 8px", borderRadius: "999px", backgroundColor: ADMIN_THEME.surfaceSoft, border: `1px solid ${ADMIN_THEME.border}`, color: ADMIN_THEME.subtle, fontSize: "10px", fontWeight: 700, textTransform: "uppercase" }}>
+                      Withdrawn
+                    </span>
+                  ) : null}
+                  <span style={{ padding: "4px 8px", borderRadius: "999px", backgroundColor: ADMIN_THEME.accentBg, border: `1px solid ${ADMIN_THEME.accentBorder}`, color: ADMIN_THEME.accent, fontSize: "10px", fontWeight: 700, textTransform: "uppercase" }}>
+                    {editingStudent.reportCount} report{editingStudent.reportCount === 1 ? "" : "s"}
+                  </span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "10px" }}>
+                  <div>
+                    <p style={{ color: ADMIN_THEME.subtle, fontSize: "10px", textTransform: "uppercase", margin: "0 0 4px 0" }}>Guardian</p>
+                    <p style={{ color: ADMIN_THEME.heading, fontSize: "13px", fontWeight: 700, margin: 0 }}>{editingStudent.guardian}</p>
+                  </div>
+                  <div>
+                    <p style={{ color: ADMIN_THEME.subtle, fontSize: "10px", textTransform: "uppercase", margin: "0 0 4px 0" }}>Age</p>
+                    <p style={{ color: ADMIN_THEME.heading, fontSize: "13px", fontWeight: 700, margin: 0 }}>{editingStudent.age}</p>
+                  </div>
+                  <div>
+                    <p style={{ color: ADMIN_THEME.subtle, fontSize: "10px", textTransform: "uppercase", margin: "0 0 4px 0" }}>Attendance</p>
+                    <p style={{ color: ADMIN_THEME.heading, fontSize: "13px", fontWeight: 700, margin: 0 }}>{editingStudentAttendanceSummary}</p>
+                  </div>
+                </div>
+              </div>
+
+              {studentModalMode === "view" ? (
+                <div style={{ display: "grid", gap: "14px" }}>
+                  <div style={{ padding: "14px", borderRadius: "16px", ...nestedCardStyle }}>
+                    <p style={{ color: ADMIN_THEME.subtle, fontSize: "10px", textTransform: "uppercase", margin: "0 0 6px 0" }}>Coach Notes</p>
+                    <p style={{ color: ADMIN_THEME.heading, fontSize: "13px", lineHeight: 1.6, margin: 0 }}>
+                      {editingStudent.notes.trim() || "No coach notes added for this student yet."}
+                    </p>
+                  </div>
+
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", flexWrap: "wrap" }}>
+                    {onOpenReports && editingStudent.cohortId ? (
+                      <ActionButton
+                        secondary
+                        type="button"
+                        onClick={() => onOpenReports(editingStudent.cohortId as string, editingStudent.id)}
+                        style={{ minWidth: "136px" }}
+                      >
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                          <FileText size={14} /> Open Progress
+                        </span>
+                      </ActionButton>
+                    ) : null}
+                    <ActionButton secondary type="button" onClick={handleStartStudentEdit} style={{ minWidth: "112px" }}>
+                      Edit
+                    </ActionButton>
+                    <button
+                      type="button"
+                      onClick={() => handleStudentDelete(editingStudent)}
+                      style={{
+                        minHeight: "40px",
+                        padding: "0 14px",
+                        borderRadius: "999px",
+                        border: "1px solid rgba(200,52,46,0.18)",
+                        backgroundColor: "rgba(200,52,46,0.08)",
+                        color: ADMIN_THEME.accent,
+                        fontSize: "11px",
+                        fontWeight: 800,
+                        textTransform: "uppercase",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Delete Student
+                    </button>
+                    <ActionButton secondary type="button" onClick={handleCloseStudentEditModal} style={{ minWidth: "110px" }}>
+                      Close
+                    </ActionButton>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={handleStudentEditSubmit} className="student-management-form-grid">
+                  <div>
+                    <FieldLabel>Student Name</FieldLabel>
+                    <FieldShell>
+                      <input value={editingStudentDraft.name} onChange={(event) => setEditingStudentDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Enter full name" style={inputStyle} />
+                    </FieldShell>
+                  </div>
+                  <div>
+                    <FieldLabel>Assigned Cohort</FieldLabel>
+                    <FieldShell>
+                      <select value={editingStudentDraft.assignedCohortId} onChange={(event) => setEditingStudentDraft((current) => ({ ...current, assignedCohortId: event.target.value }))} style={inputStyle}>
+                        <option value="">Not assigned</option>
+                        {activeCohorts.map((cohort) => (
+                          <option key={cohort.id} value={cohort.id}>
+                            {cohort.name}
+                          </option>
+                        ))}
+                      </select>
+                    </FieldShell>
+                  </div>
+                  <div>
+                    <FieldLabel>Age</FieldLabel>
+                    <FieldShell>
+                      <input value={editingStudentDraft.age} onChange={(event) => setEditingStudentDraft((current) => ({ ...current, age: event.target.value }))} placeholder="12" style={inputStyle} />
+                    </FieldShell>
+                  </div>
+                  <div>
+                    <FieldLabel>Guardian</FieldLabel>
+                    <FieldShell>
+                      <input value={editingStudentDraft.guardian} onChange={(event) => setEditingStudentDraft((current) => ({ ...current, guardian: event.target.value }))} placeholder="Parent or guardian" style={inputStyle} />
+                    </FieldShell>
+                  </div>
+                  <div>
+                    <FieldLabel>Progress Pace</FieldLabel>
+                    <FieldShell>
+                      <select value={editingStudentDraft.pace} onChange={(event) => setEditingStudentDraft((current) => ({ ...current, pace: event.target.value as StudentPace }))} style={inputStyle}>
+                        <option value="Steady">Steady</option>
+                        <option value="Fast Track">Fast Track</option>
+                        <option value="Needs Support">Needs Support</option>
+                      </select>
+                    </FieldShell>
+                  </div>
+                  <div>
+                    <FieldLabel>Status</FieldLabel>
+                    <FieldShell>
+                      <select value={editingStudentDraft.status} onChange={(event) => setEditingStudentDraft((current) => ({ ...current, status: event.target.value as "active" | "withdrawn" }))} style={inputStyle}>
+                        <option value="active">Active</option>
+                        <option value="withdrawn">Withdrawn</option>
+                      </select>
+                    </FieldShell>
+                  </div>
+                  <div className="student-management-full-span">
+                    <FieldLabel>Coach Notes</FieldLabel>
+                    <FieldShell>
+                      <textarea value={editingStudentDraft.notes} onChange={(event) => setEditingStudentDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Add a quick note about confidence, support areas, or goals." style={textareaStyle} />
+                    </FieldShell>
+                  </div>
+                  <div className="student-management-full-span" style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+                    <p style={{ color: ADMIN_THEME.subtle, fontSize: "11px", lineHeight: 1.5, margin: 0 }}>
+                      Changing the assigned cohort resets attendance to that cohort&apos;s schedule. Moving out of a cohort also clears report entries linked to the old cohort.
+                    </p>
+                    <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                      <ActionButton secondary type="button" onClick={() => setStudentModalMode("view")} style={{ minWidth: "132px" }}>
+                        Back To Details
+                      </ActionButton>
+                      <ActionButton type="submit" style={{ minWidth: "154px" }}>
+                        Save Changes
+                      </ActionButton>
+                    </div>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        ) : null}
+
+        <Surface style={{ padding: "16px", alignSelf: "start" }}>
+          <div style={{ display: "grid", gap: "10px", marginBottom: "10px" }}>
             <SectionTitle
-              eyebrow="Enrollment"
-              title="Add Student To Cohort"
-              subdetail={selectedCohort.name}
+              eyebrow="Student Desk"
+              title="All Student Records"
+              detail={
+                normalizedStudentSearch
+                  ? `${filteredStudents.length}/${totalStudents} shown`
+                  : `${assignedCount} assigned · ${unassignedCount} not assigned`
+              }
               titleStyle={{ fontSize: "24px" }}
             />
-            <form onSubmit={handleStudentSubmit} className="cohort-management-form-grid">
-              <div>
-                <FieldLabel>Student Name</FieldLabel>
-                <FieldShell>
-                  <input
-                    value={studentDraft.name}
-                    onChange={(event) => setStudentDraft((current) => ({ ...current, name: event.target.value }))}
-                    placeholder="Enter full name"
-                    style={inputStyle}
-                  />
-                </FieldShell>
-              </div>
-              <div>
-                <FieldLabel>Age</FieldLabel>
-                <FieldShell>
-                  <input
-                    value={studentDraft.age}
-                    onChange={(event) => setStudentDraft((current) => ({ ...current, age: event.target.value }))}
-                    placeholder="12"
-                    style={inputStyle}
-                  />
-                </FieldShell>
-              </div>
-              <div>
-                <FieldLabel>Guardian</FieldLabel>
-                <FieldShell>
-                  <input
-                    value={studentDraft.guardian}
-                    onChange={(event) => setStudentDraft((current) => ({ ...current, guardian: event.target.value }))}
-                    placeholder="Parent or guardian"
-                    style={inputStyle}
-                  />
-                </FieldShell>
-              </div>
-              <div>
-                <FieldLabel>Progress Pace</FieldLabel>
-                <FieldShell>
-                  <select
-                    value={studentDraft.pace}
-                    onChange={(event) => setStudentDraft((current) => ({ ...current, pace: event.target.value as StudentPace }))}
-                    style={inputStyle}
-                  >
-                    <option value="Steady">Steady</option>
-                    <option value="Fast Track">Fast Track</option>
-                    <option value="Needs Support">Needs Support</option>
-                  </select>
-                </FieldShell>
-              </div>
-              <div className="cohort-management-full-span">
-                <FieldLabel>Coach Notes</FieldLabel>
-                <FieldShell>
-                  <textarea
-                    value={studentDraft.notes}
-                    onChange={(event) => setStudentDraft((current) => ({ ...current, notes: event.target.value }))}
-                    placeholder="Add a quick note about confidence, goals, or support areas."
-                    style={textareaStyle}
-                  />
-                </FieldShell>
-              </div>
-              <div
-                className="cohort-management-full-span"
-                style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "center", flexWrap: "wrap" }}
-              >
-                <p style={{ color: ADMIN_THEME.subtle, fontSize: "11px", lineHeight: 1.5, margin: 0 }}>
-                  New students are added directly to this cohort and receive pending attendance for every scheduled class.
-                </p>
-                <ActionButton type="submit" style={{ minWidth: "136px", minHeight: "40px" }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                    <Plus size={14} /> Add Student
-                  </span>
+
+            <div style={{ display: "grid", gap: "10px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
+                <p style={{ margin: 0, color: ADMIN_THEME.heading, fontSize: "12px", fontWeight: 800, textTransform: "uppercase" }}>Filters</p>
+                <ActionButton secondary type="button" onClick={clearFilters} disabled={!hasActiveFilters} style={{ minHeight: "34px", minWidth: "124px" }}>
+                  Clear All Filters
                 </ActionButton>
               </div>
-            </form>
-          </Surface>
 
-          <Surface style={{ padding: "16px", alignSelf: "start" }}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: "10px",
-                flexWrap: "wrap",
-                alignItems: "flex-start",
-                marginBottom: "10px",
-              }}
-            >
-              <SectionTitle
-                eyebrow="Manage Students"
-                title="Roster Controls"
-                detail={
-                  normalizedStudentSearch
-                    ? `${filteredStudents.length}/${selectedCohort.students.length} shown`
-                    : `${selectedCohort.students.length} stored`
-                }
-                titleStyle={{ fontSize: "24px" }}
-              />
-              <button
-                type="button"
-                onClick={handleToggleRosterEditMode}
-                style={{
-                  minHeight: "34px",
-                  padding: "0 12px",
-                  borderRadius: "999px",
-                  border: `1px solid ${isRosterEditMode ? ADMIN_THEME.accentBorder : ADMIN_THEME.border}`,
-                  backgroundColor: isRosterEditMode ? ADMIN_THEME.accentBg : ADMIN_THEME.surface,
-                  color: isRosterEditMode ? ADMIN_THEME.accent : ADMIN_THEME.heading,
-                  fontSize: "10px",
-                  fontWeight: 800,
-                  letterSpacing: "0px",
-                  textTransform: "uppercase",
-                  cursor: "pointer",
-                }}
-              >
-                {isRosterEditMode ? "Done Editing" : "Edit Students"}
-              </button>
-            </div>
-            <div style={{ display: "grid", gap: "10px", marginBottom: "10px" }}>
               <div style={{ display: "grid", gap: "6px" }}>
-                <FieldLabel>Search Students</FieldLabel>
+                <FieldLabel>Student Search</FieldLabel>
                 <FieldShell>
                   <input
                     value={studentSearch}
                     onChange={(event) => setStudentSearch(event.target.value)}
-                    placeholder="Search name, guardian, pace, or notes"
+                    placeholder="Search name, guardian, notes, or cohort"
                     style={inputStyle}
                   />
                 </FieldShell>
               </div>
-              <p style={{ color: ADMIN_THEME.subtle, fontSize: "11px", lineHeight: 1.45, margin: 0 }}>
-                Click a student card to open their history. Use `Report` on a student row to open the coach report popup.
-                {isRosterEditMode ? " Edit and delete controls are now visible for this roster." : " Turn on `Edit Students` to reveal edit and delete controls."}
-              </p>
-            </div>
 
-            <div style={{ display: "grid", gap: "8px" }}>
-              {selectedCohort.students.length === 0 ? null : filteredStudents.length === 0 ? (
-                <div
-                  style={{
-                    padding: "14px",
-                    borderRadius: "14px",
-                    border: `1px dashed ${ADMIN_THEME.border}`,
-                    color: ADMIN_THEME.subtle,
-                    fontSize: "13px",
-                    backgroundColor: ADMIN_THEME.surfaceSoft,
-                  }}
-                >
-                  No students match this search yet.
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                  gap: "10px",
+                }}
+              >
+                <div style={{ display: "grid", gap: "6px" }}>
+                  <FieldLabel>Cohort Filter</FieldLabel>
+                  <FieldShell>
+                    <select value={assignmentFilter} onChange={(event) => setAssignmentFilter(event.target.value as AssignmentFilter)} style={inputStyle}>
+                      <option value="all">All Students</option>
+                      <option value="focused">{focusedCohort ? focusedCohort.name : "Selected Cohort"}</option>
+                      <option value="unassigned">Not Assigned</option>
+                    </select>
+                  </FieldShell>
                 </div>
-              ) : (
-                filteredStudents.map((student) => (
+
+                <div style={{ display: "grid", gap: "6px" }}>
+                  <FieldLabel>Pace Filter</FieldLabel>
+                  <FieldShell>
+                    <select value={paceFilter} onChange={(event) => setPaceFilter(event.target.value as typeof paceFilter)} style={inputStyle}>
+                      <option value="all">All Paces</option>
+                      <option value="Steady">Steady</option>
+                      <option value="Fast Track">Fast Track</option>
+                      <option value="Needs Support">Needs Support</option>
+                    </select>
+                  </FieldShell>
+                </div>
+
+                <div style={{ display: "grid", gap: "6px" }}>
+                  <FieldLabel>Status Filter</FieldLabel>
+                  <FieldShell>
+                    <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)} style={inputStyle}>
+                      <option value="all">All Statuses</option>
+                      <option value="active">Active</option>
+                      <option value="withdrawn">Withdrawn</option>
+                    </select>
+                  </FieldShell>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gap: "6px" }}>
+            {totalStudents === 0 ? (
+              <div
+                style={{
+                  padding: "14px",
+                  borderRadius: "14px",
+                  border: `1px dashed ${ADMIN_THEME.border}`,
+                  color: ADMIN_THEME.subtle,
+                  fontSize: "13px",
+                  backgroundColor: ADMIN_THEME.surfaceSoft,
+                }}
+              >
+                No students exist yet. Add the first student and either place them into a cohort now or leave them unassigned.
+              </div>
+            ) : filteredStudents.length === 0 ? (
+              <div
+                style={{
+                  padding: "14px",
+                  borderRadius: "14px",
+                  border: `1px dashed ${ADMIN_THEME.border}`,
+                  color: ADMIN_THEME.subtle,
+                  fontSize: "13px",
+                  backgroundColor: ADMIN_THEME.surfaceSoft,
+                }}
+              >
+                No students match the current search and filter combination.
+              </div>
+            ) : (
+              filteredStudents.map((student) => {
+                const studentStatus = student.status ?? "active";
+                const isUnassigned = !student.cohortId;
+
+                return (
                   <div
                     key={student.id}
-                    onClick={() => setSelectedStudentId((current) => (current === student.id ? null : student.id))}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => handleStudentEdit(student)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        handleStudentEdit(student);
+                      }
+                    }}
                     style={{
-                      padding: "12px",
-                      borderRadius: "14px",
-                      display: "grid",
-                      gap: "8px",
-                      cursor: "pointer",
+                      padding: "8px 10px",
+                      borderRadius: "12px",
                       ...nestedCardStyle,
-                      border:
-                        selectedStudentId === student.id || editingStudentId === student.id
-                          ? `1px solid ${ADMIN_THEME.accentBorder}`
-                          : nestedCardStyle.border,
+                      border: isUnassigned ? "1px solid rgba(245,158,11,0.28)" : nestedCardStyle.border,
+                      backgroundColor: isUnassigned ? "rgba(245,158,11,0.08)" : nestedCardStyle.backgroundColor,
+                      opacity: studentStatus === "withdrawn" ? 0.66 : 1,
+                      cursor: "pointer",
                     }}
                   >
-                    <div style={{ display: "grid", gap: "4px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", flexWrap: "wrap", alignItems: "flex-start" }}>
-                        <h4
-                          style={{
-                            color: ADMIN_THEME.heading,
-                            fontSize: "16px",
-                            fontFamily: "var(--font-body)",
-                            fontStyle: "italic",
-                            fontWeight: 800,
-                            margin: 0,
-                          }}
-                        >
+                    <div className="student-management-list-row">
+                      <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap", minWidth: 0 }}>
+                        <h4 style={{ color: ADMIN_THEME.heading, fontSize: "14px", fontFamily: "var(--font-body)", fontStyle: "italic", fontWeight: 800, margin: 0, minWidth: 0 }}>
                           {student.name}
                         </h4>
-                        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                        <span
+                          style={{
+                            padding: "3px 7px",
+                            borderRadius: "999px",
+                            border: isUnassigned ? "1px solid rgba(245,158,11,0.22)" : `1px solid ${ADMIN_THEME.border}`,
+                            backgroundColor: isUnassigned ? "rgba(245,158,11,0.12)" : ADMIN_THEME.surface,
+                            color: isUnassigned ? "#9D6100" : ADMIN_THEME.subtle,
+                            fontSize: "9px",
+                            fontWeight: 700,
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {student.cohortName}
+                        </span>
+                        {studentStatus === "withdrawn" ? (
+                          <span style={{ padding: "3px 7px", borderRadius: "999px", backgroundColor: ADMIN_THEME.surfaceSoft, border: `1px solid ${ADMIN_THEME.border}`, color: ADMIN_THEME.subtle, fontSize: "9px", fontWeight: 700, textTransform: "uppercase" }}>
+                            Withdrawn
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                        <button
+                          type="button"
+                          aria-label={`Open ${student.name} profile`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleStudentEdit(student);
+                          }}
+                          style={{
+                            width: "26px",
+                            height: "26px",
+                            borderRadius: "999px",
+                            border: `1px solid ${ADMIN_THEME.border}`,
+                            backgroundColor: ADMIN_THEME.surface,
+                            color: ADMIN_THEME.heading,
+                            display: "grid",
+                            placeItems: "center",
+                            cursor: "pointer",
+                            flexShrink: 0,
+                          }}
+                        >
+                          <User size={12} />
+                        </button>
+                        <span style={{ padding: "3px 7px", borderRadius: "999px", backgroundColor: ADMIN_THEME.accentBg, border: `1px solid ${ADMIN_THEME.accentBorder}`, color: ADMIN_THEME.accent, fontSize: "9px", fontWeight: 700, textTransform: "uppercase" }}>
+                          {student.reportCount} report{student.reportCount === 1 ? "" : "s"}
+                        </span>
+                        {onOpenReports && student.cohortId ? (
                           <button
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
-                              handleStartReport(student);
+                              onOpenReports(student.cohortId as string, student.id);
                             }}
                             style={{
-                              minHeight: "30px",
-                              padding: "0 9px",
+                              minHeight: "26px",
+                              padding: "0 8px",
                               borderRadius: "999px",
                               border: `1px solid ${ADMIN_THEME.border}`,
-                              backgroundColor: newReport.studentId === student.id ? ADMIN_THEME.accentBg : ADMIN_THEME.surface,
-                              color: newReport.studentId === student.id ? ADMIN_THEME.accent : ADMIN_THEME.heading,
-                              fontSize: "10px",
+                              backgroundColor: ADMIN_THEME.surface,
+                              color: ADMIN_THEME.heading,
+                              fontSize: "9px",
                               fontWeight: 800,
-                              letterSpacing: "0px",
                               textTransform: "uppercase",
                               cursor: "pointer",
                             }}
                           >
-                            Report
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                              <FileText size={11} /> Progress
+                            </span>
                           </button>
-                          {isRosterEditMode ? (
-                            <>
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  handleStudentEdit(student);
-                                }}
-                                style={{
-                                  minHeight: "30px",
-                                  padding: "0 9px",
-                                  borderRadius: "999px",
-                                  border: `1px solid ${ADMIN_THEME.border}`,
-                                  backgroundColor:
-                                    editingStudentId === student.id ? ADMIN_THEME.accentBg : ADMIN_THEME.surface,
-                                  color: ADMIN_THEME.heading,
-                                  fontSize: "10px",
-                                  fontWeight: 800,
-                                  letterSpacing: "0px",
-                                  textTransform: "uppercase",
-                                  cursor: "pointer",
-                                }}
-                              >
-                                {editingStudentId === student.id ? "Editing" : "Edit"}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  handleStudentDelete(student);
-                                }}
-                                style={{
-                                  minHeight: "30px",
-                                  padding: "0 9px",
-                                  borderRadius: "999px",
-                                  border: `1px solid ${ADMIN_THEME.accentBorder}`,
-                                  backgroundColor: ADMIN_THEME.accentBg,
-                                  color: ADMIN_THEME.accent,
-                                  fontSize: "10px",
-                                  fontWeight: 800,
-                                  letterSpacing: "0px",
-                                  textTransform: "uppercase",
-                                  cursor: "pointer",
-                                }}
-                              >
-                                Delete
-                              </button>
-                            </>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-                        <p style={{ color: ADMIN_THEME.muted, fontSize: "11px", margin: 0 }}>
-                          Age {student.age} · Guardian {student.guardian}
-                        </p>
-                        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                          <span style={pacePillStyle(student.pace)}>{student.pace}</span>
-                          <span style={{ color: ADMIN_THEME.subtle, fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase" }}>
-                            {attendanceBreakdown(student)}
-                          </span>
-                        </div>
+                        ) : null}
                       </div>
                     </div>
-
-                    <p style={{ color: ADMIN_THEME.subtle, fontSize: "11px", lineHeight: 1.45, margin: 0 }}>
-                      {student.notes || "No coach notes stored for this student yet."}
-                    </p>
-
-                    {selectedStudentId === student.id ? (
-                      <div
-                        style={{
-                          display: "grid",
-                          gap: "8px",
-                          paddingTop: "8px",
-                          borderTop: `1px solid ${ADMIN_THEME.borderSoft}`,
-                        }}
-                      >
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-                          <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", fontWeight: 700, letterSpacing: "0px", textTransform: "uppercase", margin: 0 }}>
-                            Previous Reports
-                          </p>
-                          <span style={{ color: ADMIN_THEME.subtle, fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase" }}>
-                            {selectedCohort.reports.filter((report) => report.studentId === student.id).length} stored
-                          </span>
-                        </div>
-                        {selectedCohort.reports.filter((report) => report.studentId === student.id).length === 0 ? (
-                          <p style={{ color: ADMIN_THEME.subtle, fontSize: "11px", lineHeight: 1.45, margin: 0 }}>
-                            No coach reports have been saved for this student yet.
-                          </p>
-                        ) : (
-                          selectedCohort.reports
-                            .filter((report) => report.studentId === student.id)
-                            .map((report) => (
-                              <div
-                                key={report.id}
-                                style={{
-                                  display: "grid",
-                                  gap: "4px",
-                                  padding: "10px",
-                                  borderRadius: "12px",
-                                  backgroundColor: "#F3EEE8",
-                                  border: `1px solid ${ADMIN_THEME.borderSoft}`,
-                                }}
-                              >
-                                <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase", margin: 0 }}>
-                                  {new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date(report.createdAt))}
-                                </p>
-                                <p style={{ color: ADMIN_THEME.heading, fontSize: "13px", fontWeight: 800, margin: 0 }}>
-                                  {report.title}
-                                </p>
-                                <p style={{ color: ADMIN_THEME.muted, fontSize: "11px", lineHeight: 1.45, margin: 0 }}>
-                                  {report.summary}
-                                </p>
-                                {report.recommendation ? (
-                                  <p style={{ color: ADMIN_THEME.subtle, fontSize: "11px", lineHeight: 1.45, margin: 0 }}>
-                                    Next: {report.recommendation}
-                                  </p>
-                                ) : null}
-                              </div>
-                            ))
-                        )}
-                      </div>
-                    ) : null}
                   </div>
-                ))
-              )}
-            </div>
-          </Surface>
-        </div>
+                );
+              })
+            )}
+          </div>
+        </Surface>
       </div>
-
-      {editingStudent ? (
-        <div
-          onClick={handleCloseStudentEditModal}
-          style={{
-            position: "fixed",
-            inset: 0,
-            backgroundColor: "rgba(22,18,14,0.38)",
-            display: "grid",
-            placeItems: "center",
-            padding: "24px",
-            zIndex: 45,
-          }}
-        >
-          <div
-            onClick={(event) => event.stopPropagation()}
-            style={{
-              width: "min(640px, 100%)",
-              padding: "18px",
-              borderRadius: "20px",
-              background: "linear-gradient(180deg, #FFFFFF 0%, #FBF8F4 100%)",
-              border: `1px solid ${ADMIN_THEME.border}`,
-              boxShadow: "0 24px 70px rgba(22,18,14,0.22)",
-              display: "grid",
-              gap: "12px",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start" }}>
-              <div style={{ display: "grid", gap: "4px" }}>
-                <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", fontWeight: 700, letterSpacing: "0px", textTransform: "uppercase", margin: 0 }}>
-                  Student Record
-                </p>
-                <h3 style={{ color: ADMIN_THEME.heading, fontSize: "24px", fontFamily: "var(--font-heading)", margin: 0, lineHeight: 1 }}>
-                  Edit Student
-                </h3>
-                <p style={{ color: ADMIN_THEME.muted, fontSize: "12px", margin: 0 }}>
-                  Update profile details without disturbing the add-student form.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={handleCloseStudentEditModal}
-                style={{
-                  width: "34px",
-                  height: "34px",
-                  borderRadius: "999px",
-                  border: `1px solid ${ADMIN_THEME.border}`,
-                  backgroundColor: ADMIN_THEME.surface,
-                  color: ADMIN_THEME.heading,
-                  display: "grid",
-                  placeItems: "center",
-                  cursor: "pointer",
-                }}
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <form onSubmit={handleStudentEditSubmit} className="cohort-management-form-grid">
-              <div>
-                <FieldLabel>Student Name</FieldLabel>
-                <FieldShell>
-                  <input
-                    value={editingStudentDraft.name}
-                    onChange={(event) => setEditingStudentDraft((current) => ({ ...current, name: event.target.value }))}
-                    placeholder="Enter full name"
-                    style={inputStyle}
-                  />
-                </FieldShell>
-              </div>
-              <div>
-                <FieldLabel>Age</FieldLabel>
-                <FieldShell>
-                  <input
-                    value={editingStudentDraft.age}
-                    onChange={(event) => setEditingStudentDraft((current) => ({ ...current, age: event.target.value }))}
-                    placeholder="12"
-                    style={inputStyle}
-                  />
-                </FieldShell>
-              </div>
-              <div>
-                <FieldLabel>Guardian</FieldLabel>
-                <FieldShell>
-                  <input
-                    value={editingStudentDraft.guardian}
-                    onChange={(event) => setEditingStudentDraft((current) => ({ ...current, guardian: event.target.value }))}
-                    placeholder="Parent or guardian"
-                    style={inputStyle}
-                  />
-                </FieldShell>
-              </div>
-              <div>
-                <FieldLabel>Progress Pace</FieldLabel>
-                <FieldShell>
-                  <select
-                    value={editingStudentDraft.pace}
-                    onChange={(event) => setEditingStudentDraft((current) => ({ ...current, pace: event.target.value as StudentPace }))}
-                    style={inputStyle}
-                  >
-                    <option value="Steady">Steady</option>
-                    <option value="Fast Track">Fast Track</option>
-                    <option value="Needs Support">Needs Support</option>
-                  </select>
-                </FieldShell>
-              </div>
-              <div className="cohort-management-full-span">
-                <FieldLabel>Coach Notes</FieldLabel>
-                <FieldShell>
-                  <textarea
-                    value={editingStudentDraft.notes}
-                    onChange={(event) => setEditingStudentDraft((current) => ({ ...current, notes: event.target.value }))}
-                    placeholder="Add a quick note about confidence, goals, or support areas."
-                    style={textareaStyle}
-                  />
-                </FieldShell>
-              </div>
-              <div
-                className="cohort-management-full-span"
-                style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "center", flexWrap: "wrap" }}
-              >
-                <p style={{ color: ADMIN_THEME.subtle, fontSize: "11px", lineHeight: 1.5, margin: 0 }}>
-                  Save the revised record back into the cohort roster from this popup.
-                </p>
-                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                  <ActionButton secondary type="button" onClick={handleCloseStudentEditModal} style={{ minWidth: "118px", minHeight: "40px" }}>
-                    Cancel
-                  </ActionButton>
-                  <ActionButton type="submit" style={{ minWidth: "132px", minHeight: "40px" }}>
-                    Save Student
-                  </ActionButton>
-                </div>
-              </div>
-            </form>
-          </div>
-        </div>
-      ) : null}
-
-      {reportModalStudent ? (
-        <div
-          onClick={handleCloseReportModal}
-          style={{
-            position: "fixed",
-            inset: 0,
-            backgroundColor: "rgba(22,18,14,0.38)",
-            display: "grid",
-            placeItems: "center",
-            padding: "24px",
-            zIndex: 40,
-          }}
-        >
-          <div
-            onClick={(event) => event.stopPropagation()}
-            style={{
-              width: "min(640px, 100%)",
-              padding: "18px",
-              borderRadius: "20px",
-              background: "linear-gradient(180deg, #FFFFFF 0%, #FBF8F4 100%)",
-              border: `1px solid ${ADMIN_THEME.border}`,
-              boxShadow: "0 24px 70px rgba(22,18,14,0.22)",
-              display: "grid",
-              gap: "12px",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start" }}>
-              <div style={{ display: "grid", gap: "4px" }}>
-                <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", fontWeight: 700, letterSpacing: "0px", textTransform: "uppercase", margin: 0 }}>
-                  Coach Report
-                </p>
-                <h3 style={{ color: ADMIN_THEME.heading, fontSize: "24px", fontFamily: "var(--font-heading)", margin: 0, lineHeight: 1 }}>
-                  {reportModalStudent.name}
-                </h3>
-                <p style={{ color: ADMIN_THEME.muted, fontSize: "12px", margin: 0 }}>
-                  Age {reportModalStudent.age} · Guardian {reportModalStudent.guardian}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={handleCloseReportModal}
-                style={{
-                  width: "34px",
-                  height: "34px",
-                  borderRadius: "999px",
-                  border: `1px solid ${ADMIN_THEME.border}`,
-                  backgroundColor: ADMIN_THEME.surface,
-                  color: ADMIN_THEME.heading,
-                  display: "grid",
-                  placeItems: "center",
-                  cursor: "pointer",
-                }}
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <form onSubmit={handleReportSubmit} style={{ display: "grid", gap: "10px" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "10px" }}>
-                <div>
-                  <FieldLabel>Student</FieldLabel>
-                  <FieldShell>
-                    <input value={reportModalStudent.name} readOnly style={inputStyle} />
-                  </FieldShell>
-                </div>
-                <div>
-                  <FieldLabel>Report Title</FieldLabel>
-                  <FieldShell>
-                    <input
-                      value={newReport.title}
-                      onChange={(event) => setNewReport((current) => ({ ...current, title: event.target.value }))}
-                      placeholder="Progress report"
-                      style={inputStyle}
-                    />
-                  </FieldShell>
-                </div>
-              </div>
-
-              <div>
-                <FieldLabel>Summary</FieldLabel>
-                <FieldShell>
-                  <textarea
-                    value={newReport.summary}
-                    onChange={(event) => setNewReport((current) => ({ ...current, summary: event.target.value }))}
-                    placeholder="Summarise pace, confidence, and key session behaviours."
-                    style={{ ...textareaStyle, minHeight: "88px" }}
-                  />
-                </FieldShell>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: "10px", alignItems: "end" }}>
-                <div>
-                  <FieldLabel>Next Step</FieldLabel>
-                  <FieldShell>
-                    <input
-                      value={newReport.recommendation}
-                      onChange={(event) => setNewReport((current) => ({ ...current, recommendation: event.target.value }))}
-                      placeholder="Home practice or coaching focus"
-                      style={inputStyle}
-                    />
-                  </FieldShell>
-                </div>
-                <ActionButton type="submit" style={{ minWidth: "118px", minHeight: "40px" }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-                    <FileText size={14} /> Save Report
-                  </span>
-                </ActionButton>
-              </div>
-            </form>
-          </div>
-        </div>
-      ) : null}
     </>
   );
 }
+
+export const AdminCohortManagementPage = AdminStudentManagementPage;

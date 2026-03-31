@@ -3,115 +3,104 @@ import {
   ArrowLeft,
   ArrowRight,
   CalendarDays,
+  CheckCircle2,
+  Clock3,
   FileText,
-  GraduationCap,
   Megaphone,
+  Plus,
   Users,
   X,
 } from "lucide-react";
 import {
   ActionButton,
   ADMIN_THEME,
-  MetricCard,
+  ATTENDANCE_COLORS,
+  CohortSwitcher,
+  createId,
+  FieldLabel,
+  FieldShell,
+  formatDateTime,
+  getSessionTimestamp,
+  getPriorityClass,
+  inputStyle,
+  loadCohorts,
+  nestedCardStyle,
   SectionTitle,
   STORAGE_KEY,
   Surface,
-  formatDateTime,
-  loadCohorts,
+  textareaStyle,
   type AnnouncementEntry,
   type AttendanceState,
   type Cohort,
 } from "./AdminDashboard";
 
-const nestedCardStyle: CSSProperties = {
-  border: `1px solid ${ADMIN_THEME.borderSoft}`,
-  backgroundColor: ADMIN_THEME.surfaceSoft,
-  boxShadow: "inset 0 1px 0 rgba(255,255,255,0.75)",
-};
+/* ── helpers ── */
 
-const ATTENDANCE_COLORS: Record<AttendanceState, { bg: string; text: string; border: string }> = {
-  pending: { bg: "#F3EEE8", text: "#7E7063", border: "rgba(73,57,42,0.12)" },
-  present: { bg: "rgba(34,197,94,0.10)", text: "#247A44", border: "rgba(34,197,94,0.22)" },
-  late: { bg: "rgba(245,158,11,0.12)", text: "#9D6100", border: "rgba(245,158,11,0.22)" },
-  absent: { bg: "rgba(200,52,46,0.10)", text: "#B6332C", border: "rgba(200,52,46,0.22)" },
-};
-
-function createId(prefix: string) {
-  return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function getSessionTimestamp(session: Cohort["classes"][number]) {
-  return new Date(`${session.date}T${session.time}:00`).getTime();
-}
-
-function getPriorityClass(classes: Cohort["classes"]) {
-  const ordered = [...classes].sort((left, right) => getSessionTimestamp(left) - getSessionTimestamp(right));
-  const now = Date.now();
-
-  return ordered.find((session) => getSessionTimestamp(session) >= now) ?? ordered[ordered.length - 1];
-}
-
-function FieldLabel({ children }: { children: ReactNode }) {
-  return (
-    <label
-      style={{
-        display: "block",
-        color: ADMIN_THEME.subtle,
-        fontSize: "11px",
-        fontWeight: 700,
-        letterSpacing: "0px",
-        textTransform: "uppercase",
-        marginBottom: "8px",
-      }}
-    >
-      {children}
-    </label>
+function getSessionAttendanceCounts(students: Cohort["students"], classId: string) {
+  return students.reduce(
+    (counts, student) => {
+      if ((student.status ?? "active") !== "active") return counts;
+      const state = student.attendance[classId] ?? "pending";
+      counts[state] += 1;
+      counts.total += 1;
+      return counts;
+    },
+    { pending: 0, present: 0, late: 0, absent: 0, total: 0 },
   );
 }
 
-function FieldShell({ children }: { children: ReactNode }) {
-  return (
-    <div
-      style={{
-        backgroundColor: ADMIN_THEME.inputBg,
-        border: `1px solid ${ADMIN_THEME.inputBorder}`,
-        borderRadius: "14px",
-        padding: "0 14px",
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.75)",
-      }}
-    >
-      {children}
-    </div>
-  );
+function getOverallAttendanceRate(cohort: Cohort) {
+  const activeStudents = cohort.students.filter((s) => (s.status ?? "active") === "active");
+  if (activeStudents.length === 0 || cohort.classes.length === 0) return null;
+
+  let marked = 0;
+  let presentOrLate = 0;
+
+  for (const student of activeStudents) {
+    for (const session of cohort.classes) {
+      const state = student.attendance[session.id];
+      if (state && state !== "pending") {
+        marked += 1;
+        if (state === "present" || state === "late") presentOrLate += 1;
+      }
+    }
+  }
+
+  if (marked === 0) return null;
+  return Math.round((presentOrLate / marked) * 100);
 }
 
-const inputStyle: CSSProperties = {
-  width: "100%",
-  height: "46px",
-  background: "transparent",
-  border: "none",
-  outline: "none",
-  color: ADMIN_THEME.heading,
-  fontSize: "14px",
-  fontFamily: "var(--font-body)",
-};
+function getTotalPendingCount(cohort: Cohort) {
+  const activeStudents = cohort.students.filter((s) => (s.status ?? "active") === "active");
+  let count = 0;
+  for (const student of activeStudents) {
+    for (const session of cohort.classes) {
+      if ((student.attendance[session.id] ?? "pending") === "pending") count += 1;
+    }
+  }
+  return count;
+}
 
-const textareaStyle: CSSProperties = {
-  width: "100%",
-  minHeight: "96px",
-  padding: "12px 0",
-  resize: "vertical",
-  background: "transparent",
-  border: "none",
-  outline: "none",
-  color: ADMIN_THEME.heading,
-  fontSize: "14px",
-  fontFamily: "var(--font-body)",
-};
+function getActiveAnnouncementCount(announcements: AnnouncementEntry[]) {
+  const now = new Date();
+  return announcements.filter((a) => !a.expiresAt || new Date(a.expiresAt) >= now).length;
+}
+
+function announcementTargetLabel(classId: string | undefined, classes: Cohort["classes"]) {
+  if (!classId) return "Whole cohort";
+  const targetClass = classes.find((session) => session.id === classId);
+  if (!targetClass) return "Archived class target";
+  return `${formatDateTime(targetClass.date, targetClass.time)} · ${targetClass.topic}`;
+}
+
+function emptyAnnouncementDraft(classId = "") {
+  return { classId, title: "", message: "", expiresAt: "" };
+}
+
+/* ── small reusable pieces ── */
 
 function pillSummaryStyle(state: AttendanceState): CSSProperties {
   const colors = ATTENDANCE_COLORS[state];
-
   return {
     padding: "7px 10px",
     borderRadius: "999px",
@@ -124,57 +113,97 @@ function pillSummaryStyle(state: AttendanceState): CSSProperties {
   };
 }
 
-function announcementTargetLabel(classId: string | undefined, classes: Cohort["classes"]) {
-  if (!classId) {
-    return "Whole cohort";
-  }
-
-  const targetClass = classes.find((session) => session.id === classId);
-
-  if (!targetClass) {
-    return "Archived class target";
-  }
-
-  return `${formatDateTime(targetClass.date, targetClass.time)} · ${targetClass.topic}`;
+function MetricTile({ icon, label, value, accentValue }: { icon: ReactNode; label: string; value: string; accentValue?: boolean }) {
+  return (
+    <div style={{ padding: "14px", borderRadius: "16px", ...nestedCardStyle, display: "grid", gap: "4px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <p style={{ color: ADMIN_THEME.subtle, fontSize: "10px", fontWeight: 700, textTransform: "uppercase", margin: 0 }}>{label}</p>
+        <div style={{ width: "32px", height: "32px", borderRadius: "10px", border: `1px solid ${ADMIN_THEME.accentBorder}`, backgroundColor: ADMIN_THEME.accentBg, display: "grid", placeItems: "center", color: ADMIN_THEME.accent, flexShrink: 0 }}>
+          {icon}
+        </div>
+      </div>
+      <p style={{ color: accentValue ? ADMIN_THEME.accent : ADMIN_THEME.heading, fontSize: "28px", fontFamily: "var(--font-body)", fontWeight: 900, margin: 0, lineHeight: 1 }}>{value}</p>
+    </div>
+  );
 }
 
-function emptyAnnouncementDraft(classId = "") {
-  return {
-    classId,
-    title: "",
-    message: "",
-  };
+function QuickNavButton({ icon, label, onClick }: { icon: ReactNode; label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "6px",
+        minHeight: "36px",
+        padding: "0 14px",
+        borderRadius: "12px",
+        border: `1px solid ${ADMIN_THEME.border}`,
+        background: "linear-gradient(180deg, #FFFFFF 0%, #F8F3EE 100%)",
+        color: ADMIN_THEME.heading,
+        fontSize: "11px",
+        fontWeight: 800,
+        textTransform: "uppercase",
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+        boxShadow: "0 4px 10px rgba(70,46,25,0.04)",
+      }}
+    >
+      {icon}
+      {label}
+    </button>
+  );
 }
+
+function AttendanceBar({ counts }: { counts: { present: number; late: number; absent: number; pending: number; total: number } }) {
+  if (counts.total === 0) return null;
+  const segments: { key: AttendanceState; count: number; color: string }[] = [
+    { key: "present", count: counts.present, color: "#22C55E" },
+    { key: "late", count: counts.late, color: "#F59E0B" },
+    { key: "absent", count: counts.absent, color: "#C8342E" },
+    { key: "pending", count: counts.pending, color: "#DDD5CC" },
+  ];
+
+  return (
+    <div style={{ display: "flex", height: "6px", borderRadius: "999px", overflow: "hidden", width: "100%" }}>
+      {segments.map((seg) =>
+        seg.count > 0 ? (
+          <div key={seg.key} style={{ width: `${(seg.count / counts.total) * 100}%`, backgroundColor: seg.color, minWidth: "3px" }} />
+        ) : null,
+      )}
+    </div>
+  );
+}
+
+/* ── main component ── */
 
 interface AdminCohortDashboardProps {
   initialCohortId?: string;
   onOpenAttendance?: (context: { cohortId: string; classId: string }) => void;
-  onOpenCohortManagement?: (cohortId: string) => void;
   onOpenTeachingOperations?: (cohortId: string) => void;
+  onOpenCohortManagement?: (cohortId: string) => void;
+  onOpenCohortReports?: (cohortId: string) => void;
+  onSelectCohort?: (cohortId: string) => void;
   onBackToLanding?: () => void;
 }
 
 export function AdminCohortDashboard({
   initialCohortId,
   onOpenAttendance,
-  onOpenCohortManagement,
   onOpenTeachingOperations,
+  onOpenCohortManagement,
+  onOpenCohortReports,
+  onSelectCohort,
   onBackToLanding,
 }: AdminCohortDashboardProps) {
   const [cohorts, setCohorts] = useState<Cohort[]>(() => loadCohorts());
   const [selectedCohortId, setSelectedCohortId] = useState(() => initialCohortId ?? loadCohorts()[0]?.id ?? "");
-  const [selectedClassId, setSelectedClassId] = useState("");
-  const [newAnnouncement, setNewAnnouncement] = useState<{
-    classId: string | null;
-    title: string;
-    message: string;
-  }>(() => emptyAnnouncementDraft());
+  const [showAnnouncementForm, setShowAnnouncementForm] = useState(false);
+  const [newAnnouncement, setNewAnnouncement] = useState<{ classId: string; title: string; message: string; expiresAt: string }>(() => emptyAnnouncementDraft());
   const [editingAnnouncementId, setEditingAnnouncementId] = useState<string | null>(null);
-  const [editingAnnouncementDraft, setEditingAnnouncementDraft] = useState<{
-    classId: string | null;
-    title: string;
-    message: string;
-  }>(() => emptyAnnouncementDraft());
+  const [editingAnnouncementDraft, setEditingAnnouncementDraft] = useState<{ classId: string; title: string; message: string; expiresAt: string }>(() => emptyAnnouncementDraft());
+  const [expandedSessionId, setExpandedSessionId] = useState<string | null>(null);
 
   const selectedCohort = cohorts.find((cohort) => cohort.id === selectedCohortId) ?? cohorts[0];
 
@@ -188,76 +217,32 @@ export function AdminCohortDashboard({
     }
   }, [cohorts, initialCohortId]);
 
-  useEffect(() => {
-    if (!selectedCohort) {
-      return;
-    }
-
-    if (!selectedClassId || !selectedCohort.classes.some((session) => session.id === selectedClassId)) {
-      setSelectedClassId(selectedCohort.classes[0]?.id ?? "");
-    }
-  }, [selectedClassId, selectedCohort]);
-
-  useEffect(() => {
-    if (!selectedCohort) {
-      return;
-    }
-
-    setNewAnnouncement((current) => {
-      const nextClassId =
-        current.classId === null
-          ? selectedClassId || ""
-          : current.classId && selectedCohort.classes.some((session) => session.id === current.classId)
-            ? current.classId
-            : selectedClassId || "";
-
-      if (nextClassId === current.classId) {
-        return current;
-      }
-
-      return {
-        ...current,
-        classId: nextClassId,
-      };
-    });
-  }, [selectedClassId, selectedCohort]);
-
   function updateSelectedCohort(mutator: (cohort: Cohort) => Cohort) {
-    if (!selectedCohort) {
-      return;
-    }
-
-    setCohorts((current) =>
-      current.map((cohort) => (cohort.id === selectedCohort.id ? mutator(cohort) : cohort)),
-    );
+    if (!selectedCohort) return;
+    setCohorts((current) => current.map((cohort) => (cohort.id === selectedCohort.id ? mutator(cohort) : cohort)));
   }
 
   function handleAnnouncementSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
-    if (!selectedCohort || !newAnnouncement.title.trim() || !newAnnouncement.message.trim()) {
-      return;
-    }
-
-    const title = newAnnouncement.title.trim();
-    const message = newAnnouncement.message.trim();
-    const classId = newAnnouncement.classId || undefined;
+    if (!selectedCohort || !newAnnouncement.title.trim() || !newAnnouncement.message.trim()) return;
 
     updateSelectedCohort((cohort) => ({
       ...cohort,
       announcements: [
         {
           id: createId("announcement"),
-          classId,
-          title,
-          message,
+          classId: newAnnouncement.classId || undefined,
+          title: newAnnouncement.title.trim(),
+          message: newAnnouncement.message.trim(),
           createdAt: new Date().toISOString(),
+          expiresAt: newAnnouncement.expiresAt.trim() || undefined,
         },
         ...cohort.announcements,
       ],
     }));
 
-    setNewAnnouncement(emptyAnnouncementDraft(selectedClassId || ""));
+    setNewAnnouncement(emptyAnnouncementDraft());
+    setShowAnnouncementForm(false);
   }
 
   function handleAnnouncementEdit(announcement: AnnouncementEntry) {
@@ -266,50 +251,29 @@ export function AdminCohortDashboard({
       classId: announcement.classId ?? "",
       title: announcement.title,
       message: announcement.message,
+      expiresAt: announcement.expiresAt ?? "",
     });
   }
 
   function handleAnnouncementEditSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
-    if (!selectedCohort || !editingAnnouncementId || !editingAnnouncementDraft.title.trim() || !editingAnnouncementDraft.message.trim()) {
-      return;
-    }
-
-    const title = editingAnnouncementDraft.title.trim();
-    const message = editingAnnouncementDraft.message.trim();
-    const classId = editingAnnouncementDraft.classId || undefined;
+    if (!selectedCohort || !editingAnnouncementId || !editingAnnouncementDraft.title.trim() || !editingAnnouncementDraft.message.trim()) return;
 
     updateSelectedCohort((cohort) => ({
       ...cohort,
       announcements: cohort.announcements.map((announcement) =>
         announcement.id === editingAnnouncementId
-          ? {
-              ...announcement,
-              classId,
-              title,
-              message,
-            }
+          ? { ...announcement, classId: editingAnnouncementDraft.classId || undefined, title: editingAnnouncementDraft.title.trim(), message: editingAnnouncementDraft.message.trim(), expiresAt: editingAnnouncementDraft.expiresAt.trim() || undefined }
           : announcement,
       ),
     }));
-
     handleAnnouncementEditCancel();
   }
 
   function handleAnnouncementDelete(announcementId: string) {
-    if (typeof window !== "undefined" && !window.confirm("Delete this announcement?")) {
-      return;
-    }
-
-    updateSelectedCohort((cohort) => ({
-      ...cohort,
-      announcements: cohort.announcements.filter((announcement) => announcement.id !== announcementId),
-    }));
-
-    if (editingAnnouncementId === announcementId) {
-      handleAnnouncementEditCancel();
-    }
+    if (typeof window !== "undefined" && !window.confirm("Delete this announcement?")) return;
+    updateSelectedCohort((cohort) => ({ ...cohort, announcements: cohort.announcements.filter((a) => a.id !== announcementId) }));
+    if (editingAnnouncementId === announcementId) handleAnnouncementEditCancel();
   }
 
   function handleAnnouncementEditCancel() {
@@ -317,456 +281,387 @@ export function AdminCohortDashboard({
     setEditingAnnouncementDraft(emptyAnnouncementDraft());
   }
 
-  function bulkAttendance(nextState: AttendanceState) {
-    if (!selectedCohort || !selectedClassId) {
-      return;
-    }
+  function handleAnnouncementPin(announcementId: string) {
+    updateSelectedCohort((cohort) => ({
+      ...cohort,
+      announcements: cohort.announcements.map((a) => (a.id === announcementId ? { ...a, pinned: !a.pinned } : a)),
+    }));
+  }
 
+  function bulkAttendance(classId: string, nextState: AttendanceState) {
+    if (!selectedCohort || !classId) return;
     updateSelectedCohort((cohort) => ({
       ...cohort,
       students: cohort.students.map((student) => ({
         ...student,
-        attendance: {
-          ...student.attendance,
-          [selectedClassId]: nextState,
-        },
+        attendance: { ...student.attendance, [classId]: nextState },
       })),
     }));
   }
 
-  if (!selectedCohort) {
-    return null;
-  }
+  if (!selectedCohort) return null;
 
-  const selectedClass =
-    selectedCohort.classes.find((session) => session.id === selectedClassId) ?? selectedCohort.classes[0];
+  /* ── derived data ── */
+
+  const activeStudentCount = selectedCohort.students.filter((s) => (s.status ?? "active") === "active").length;
+  const overallRate = getOverallAttendanceRate(selectedCohort);
+  const totalPending = getTotalPendingCount(selectedCohort);
+  const activeAnnouncementCount = getActiveAnnouncementCount(selectedCohort.announcements);
   const priorityClass = getPriorityClass(selectedCohort.classes);
-  const completedSyllabus = selectedCohort.syllabus.filter((item) => item.status === "complete").length;
-  const liveSyllabus = selectedCohort.syllabus.filter((item) => item.status === "live").length;
-  const occupiedSeats = `${selectedCohort.students.length}/${selectedCohort.capacity}`;
-  const paceCounts = selectedCohort.students.reduce(
-    (counts, student) => {
-      if (student.pace === "Fast Track") {
-        counts.fastTrack += 1;
-      } else if (student.pace === "Needs Support") {
-        counts.needsSupport += 1;
-      } else {
-        counts.steady += 1;
-      }
-
-      return counts;
-    },
-    { steady: 0, fastTrack: 0, needsSupport: 0 },
-  );
-  const attendanceCounts = selectedCohort.students.reduce(
-    (counts, student) => {
-      const state = selectedClass ? student.attendance[selectedClass.id] ?? "pending" : "pending";
-      counts[state] += 1;
-      return counts;
-    },
-    { pending: 0, present: 0, late: 0, absent: 0 },
-  );
-  const classLinkedAnnouncements = selectedCohort.announcements.filter((announcement) => Boolean(announcement.classId)).length;
-  const availableSeats = Math.max(selectedCohort.capacity - selectedCohort.students.length, 0);
-  const teachingLeadModule = selectedCohort.syllabus.find((item) => item.status === "live") ?? selectedCohort.syllabus[0];
-  const announcementCardMinHeight = 118;
-  const announcementListGap = 6;
-  const hasAnnouncements = selectedCohort.announcements.length > 0;
-  const editingAnnouncement = selectedCohort.announcements.find((announcement) => announcement.id === editingAnnouncementId);
-  const announcementScrollLimit = 3;
-  const announcementListMaxHeight =
-    selectedCohort.announcements.length > announcementScrollLimit
-      ? `${announcementCardMinHeight * announcementScrollLimit + announcementListGap * (announcementScrollLimit - 1)}px`
-      : undefined;
+  const sortedSessions = [...selectedCohort.classes].sort((a, b) => getSessionTimestamp(a) - getSessionTimestamp(b));
+  const pinnedAnnouncements = selectedCohort.announcements.filter((a) => a.pinned);
+  const recentAnnouncements = selectedCohort.announcements.filter((a) => !a.pinned).slice(0, 5);
+  const editingAnnouncement = selectedCohort.announcements.find((a) => a.id === editingAnnouncementId);
 
   return (
     <>
       <style>{`
-        .cohort-grid {
-          display: grid;
-          grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
-          gap: 16px;
-          align-items: start;
+        .cd-stack { display: grid; gap: 12px; }
+        .cd-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+        .cd-quicknav { display: flex; gap: 8px; flex-wrap: wrap; }
+        .cd-session-table { display: grid; gap: 0; border-radius: 14px; overflow: hidden; border: 1px solid ${ADMIN_THEME.borderSoft}; }
+        .cd-session-row { display: grid; grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) 110px minmax(140px, 200px) 110px; gap: 0; align-items: center; padding: 0; border-bottom: 1px solid ${ADMIN_THEME.borderSoft}; }
+        .cd-session-row:last-child { border-bottom: none; }
+        .cd-session-cell { padding: 10px 12px; font-size: 12px; color: ${ADMIN_THEME.heading}; }
+        .cd-session-header { background: ${ADMIN_THEME.surfaceSoft}; }
+        .cd-session-header .cd-session-cell { color: ${ADMIN_THEME.subtle}; font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 8px 12px; }
+        .cd-expand-panel { padding: 12px 16px; background: ${ADMIN_THEME.surfaceSoft}; border-bottom: 1px solid ${ADMIN_THEME.borderSoft}; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+        .cd-announce-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+        .cd-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+        .cd-full-span { grid-column: 1 / -1; }
+        @media (max-width: 980px) {
+          .cd-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+          .cd-session-row { grid-template-columns: minmax(100px, 140px) minmax(0, 1fr) 100px minmax(100px, 160px); }
+          .cd-session-row > .cd-session-cell:nth-child(5) { display: none; }
+          .cd-session-header > .cd-session-cell:nth-child(5) { display: none; }
+          .cd-announce-grid { grid-template-columns: 1fr; }
+          .cd-form-grid { grid-template-columns: 1fr; }
         }
-        .cohort-metrics {
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 12px;
-        }
-        .cohort-middle-grid {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
-          gap: 10px;
-          align-items: start;
-        }
-        .cohort-rail-stack {
-          display: grid;
-          gap: 9px;
-          align-content: start;
-        }
-        .cohort-stack {
-          display: grid;
-          gap: 10px;
-          align-content: start;
-        }
-        .cohort-cta-stack {
-          display: grid;
-          gap: 10px;
-          align-content: start;
-        }
-        .cohort-form-grid {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 14px;
-        }
-        .cohort-full-span {
-          grid-column: 1 / -1;
-        }
-        @media (max-width: 1120px) {
-          .cohort-grid,
-          .cohort-middle-grid,
-          .cohort-metrics,
-          .cohort-form-grid,
-          .cohort-cta-stack {
-            grid-template-columns: 1fr;
-          }
+        @media (max-width: 640px) {
+          .cd-metrics { grid-template-columns: 1fr 1fr; }
         }
       `}</style>
 
-      <div style={{ display: "grid", gap: "16px" }}>
-        <Surface
-          accent
-          style={{
-            padding: "28px",
-            background:
-              "radial-gradient(circle at top right, rgba(200,52,46,0.18), transparent 30%), linear-gradient(135deg, #FFFFFF 0%, #F8F4EF 100%)",
-          }}
-        >
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              background:
-                "repeating-linear-gradient(120deg, transparent 0, transparent 18px, rgba(200,52,46,0.025) 18px, rgba(200,52,46,0.025) 20px)",
-              pointerEvents: "none",
-            }}
-          />
-
-          <div style={{ display: "flex", justifyContent: "space-between", gap: "18px", flexWrap: "wrap", position: "relative" }}>
-            <div style={{ maxWidth: "760px", display: "grid", gap: "16px" }}>
-              {onBackToLanding ? (
-                <div style={{ display: "flex", justifyContent: "flex-start" }}>
-                  <ActionButton secondary onClick={onBackToLanding} style={{ minWidth: "176px" }}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                      <ArrowLeft size={16} /> Back To Cohorts
-                    </span>
-                  </ActionButton>
+      <div className="cd-stack">
+        {/* ═══ 1. COMMAND BAR ═══ */}
+        <Surface accent style={{ padding: "16px" }}>
+          <div style={{ display: "grid", gap: "12px" }}>
+            {/* back + title row */}
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", flexWrap: "wrap", alignItems: "flex-start" }}>
+              <div style={{ display: "flex", gap: "12px", alignItems: "flex-start", flexWrap: "wrap" }}>
+                {onBackToLanding ? (
+                  <button
+                    type="button"
+                    onClick={onBackToLanding}
+                    style={{ width: "36px", height: "36px", borderRadius: "12px", border: `1px solid ${ADMIN_THEME.border}`, backgroundColor: ADMIN_THEME.surface, color: ADMIN_THEME.heading, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 }}
+                  >
+                    <ArrowLeft size={16} />
+                  </button>
+                ) : null}
+                <div style={{ display: "grid", gap: "4px" }}>
+                  <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", fontWeight: 700, textTransform: "uppercase", margin: 0 }}>Cohort Overview</p>
+                  <h2 style={{ color: ADMIN_THEME.heading, fontSize: "24px", fontFamily: "var(--font-heading)", fontWeight: 900, margin: 0, lineHeight: 1 }}>
+                    {selectedCohort.name}
+                  </h2>
+                  <p style={{ color: ADMIN_THEME.muted, fontSize: "12px", margin: 0 }}>
+                    {selectedCohort.program} · Coach {selectedCohort.coach} · {selectedCohort.room}
+                  </p>
                 </div>
-              ) : null}
+              </div>
 
-              <SectionTitle eyebrow="Cohort Dashboard" title={selectedCohort.name} detail={selectedCohort.program} />
-
-              <p style={{ color: ADMIN_THEME.muted, fontSize: "16px", lineHeight: 1.7, margin: "0 0 18px 0" }}>
-                Operate this cohort as its own desk. Attendance, announcements, and reporting stay here, while student operations
-                and teaching planning now run through dedicated cohort workspaces to keep this dashboard lighter.
-              </p>
-
-              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                <span style={{ padding: "8px 12px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.accentBorder}`, backgroundColor: ADMIN_THEME.accentBg, color: ADMIN_THEME.accent, fontSize: "12px", letterSpacing: "0px", textTransform: "uppercase" }}>
+              {/* meta + switcher */}
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+                <CohortSwitcher
+                  cohorts={cohorts}
+                  selectedCohortId={selectedCohort.id}
+                  onSelect={(cohortId) => {
+                    setSelectedCohortId(cohortId);
+                    onSelectCohort?.(cohortId);
+                  }}
+                />
+                <span style={{ padding: "5px 8px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.accentBorder}`, backgroundColor: ADMIN_THEME.accentBg, color: ADMIN_THEME.accent, fontSize: "10px", textTransform: "uppercase" }}>
                   {selectedCohort.cadence}
                 </span>
-                <span style={{ padding: "8px 12px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.border}`, backgroundColor: ADMIN_THEME.surfaceSoft, color: ADMIN_THEME.muted, fontSize: "12px", letterSpacing: "0px", textTransform: "uppercase" }}>
-                  {selectedCohort.room}
-                </span>
-                <span style={{ padding: "8px 12px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.border}`, backgroundColor: ADMIN_THEME.surfaceSoft, color: ADMIN_THEME.muted, fontSize: "12px", letterSpacing: "0px", textTransform: "uppercase" }}>
-                  Coach {selectedCohort.coach}
+                <span style={{ padding: "5px 8px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.border}`, backgroundColor: ADMIN_THEME.surface, color: ADMIN_THEME.muted, fontSize: "10px", textTransform: "uppercase" }}>
+                  {activeStudentCount}/{selectedCohort.capacity} seats
                 </span>
               </div>
             </div>
 
-            <div
-              style={{
-                width: "min(316px, 100%)",
-                minHeight: "295px",
-                padding: "16px",
-                borderRadius: "18px",
-                border: `1px solid ${ADMIN_THEME.border}`,
-                background: "linear-gradient(180deg, #FFFFFF 0%, #F7F2ED 100%)",
-                boxShadow: "0 12px 30px rgba(70,46,25,0.08)",
-                display: "grid",
-                alignContent: "start",
-              }}
-            >
-              <p style={{ color: ADMIN_THEME.subtle, fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 10px 0" }}>
-                Current Focus
-              </p>
-              <h3 style={{ color: ADMIN_THEME.heading, fontSize: "26px", fontFamily: "var(--font-heading)", margin: "0 0 8px 0", lineHeight: 1 }}>
-                {selectedClass ? selectedClass.track.toUpperCase() : selectedCohort.name.toUpperCase()}
-              </h3>
-              <p style={{ color: ADMIN_THEME.muted, fontSize: "14px", margin: "0 0 14px 0" }}>
-                {selectedClass ? selectedClass.topic : selectedCohort.program}
-              </p>
-              <p style={{ color: ADMIN_THEME.subtle, fontSize: "13px", margin: 0 }}>
-                {priorityClass ? `${formatDateTime(priorityClass.date, priorityClass.time)} · ${priorityClass.coach}` : "No class scheduled yet"}
-              </p>
+            {/* quick nav row */}
+            <div className="cd-quicknav">
+              {onOpenCohortManagement ? (
+                <QuickNavButton icon={<Users size={14} />} label="Manage Students" onClick={() => onOpenCohortManagement(selectedCohort.id)} />
+              ) : null}
+              {onOpenTeachingOperations ? (
+                <QuickNavButton icon={<CalendarDays size={14} />} label="Schedule & Syllabus" onClick={() => onOpenTeachingOperations(selectedCohort.id)} />
+              ) : null}
+              {onOpenCohortReports ? (
+                <QuickNavButton icon={<FileText size={14} />} label="Student Progress" onClick={() => onOpenCohortReports(selectedCohort.id)} />
+              ) : null}
+              {onOpenAttendance && priorityClass ? (
+                <QuickNavButton
+                  icon={<CheckCircle2 size={14} />}
+                  label="Full Attendance View"
+                  onClick={() => onOpenAttendance({ cohortId: selectedCohort.id, classId: priorityClass.id })}
+                />
+              ) : null}
             </div>
           </div>
         </Surface>
 
-        <div className="cohort-metrics">
-          <MetricCard icon={<Users size={20} />} label="Seat Fill" value={occupiedSeats} note={`${paceCounts.fastTrack} fast track · ${paceCounts.steady} steady · ${paceCounts.needsSupport} support`} />
-          <MetricCard icon={<CalendarDays size={20} />} label="Scheduled Sessions" value={String(selectedCohort.classes.length)} note={priorityClass ? `Next: ${formatDateTime(priorityClass.date, priorityClass.time)}` : "Add the next class to start the queue"} />
-          <MetricCard icon={<FileText size={20} />} label="Reports Logged" value={String(selectedCohort.reports.length)} note="Coaching notes saved for this cohort" />
-          <MetricCard icon={<GraduationCap size={20} />} label="Syllabus" value={`${completedSyllabus}/${selectedCohort.syllabus.length}`} note={liveSyllabus > 0 ? `${liveSyllabus} live modules in progress` : "No live modules flagged right now"} />
+        {/* ═══ 2. METRICS STRIP ═══ */}
+        <div className="cd-metrics">
+          <MetricTile
+            icon={<Users size={16} />}
+            label="Active Students"
+            value={`${activeStudentCount}`}
+          />
+          <MetricTile
+            icon={<CheckCircle2 size={16} />}
+            label="Attendance Rate"
+            value={overallRate !== null ? `${overallRate}%` : "—"}
+          />
+          <MetricTile
+            icon={<Clock3 size={16} />}
+            label="Pending Actions"
+            value={`${totalPending}`}
+            accentValue={totalPending > 0}
+          />
+          <MetricTile
+            icon={<Megaphone size={16} />}
+            label="Announcements"
+            value={`${activeAnnouncementCount}`}
+          />
         </div>
 
-        <div className="cohort-grid">
-          <div className="cohort-rail-stack">
-            <Surface
-              style={{
-                padding: "19px",
-                alignSelf: "start",
-                display: "grid",
-                alignContent: "start",
-              }}
-            >
-              <SectionTitle
-                eyebrow="Announcement Log"
-                title="Recent Updates"
-                detail={!hasAnnouncements ? `${selectedCohort.announcements.length} stored` : undefined}
-                subdetail={hasAnnouncements ? `${selectedCohort.announcements.length} stored` : undefined}
-              />
-              <div
-                style={{
-                  display: "grid",
-                  gap: `${announcementListGap}px`,
-                  maxHeight: announcementListMaxHeight,
-                  overflowY: announcementListMaxHeight ? "auto" : undefined,
-                  paddingRight: announcementListMaxHeight ? "2px" : undefined,
-                }}
-              >
-                {!hasAnnouncements ? (
-                  <p style={{ color: ADMIN_THEME.subtle, fontSize: "12px", lineHeight: 1.45, margin: 0 }}>
-                    No cohort-specific announcements yet.
-                  </p>
-                ) : (
-                  selectedCohort.announcements.map((announcement: AnnouncementEntry) => (
-                    <div
-                      key={announcement.id}
-                      style={{
-                        padding: "10px",
-                        minHeight: `${announcementCardMinHeight}px`,
-                        borderRadius: "16px",
-                        ...nestedCardStyle,
-                        border:
-                          editingAnnouncementId === announcement.id
-                            ? `1px solid ${ADMIN_THEME.accentBorder}`
-                            : nestedCardStyle.border,
-                      }}
-                    >
-                      <div style={{ display: "grid", gap: "4px", marginBottom: "5px" }}>
-                        <div style={{ display: "grid", gap: "4px" }}>
-                          <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase", margin: 0 }}>
-                            {announcementTargetLabel(announcement.classId, selectedCohort.classes)}
-                          </p>
-                          <span style={{ color: ADMIN_THEME.subtle, fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase", margin: 0 }}>
-                            {new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date(announcement.createdAt))}
-                          </span>
-                        </div>
-                        <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                          <button
-                            type="button"
-                            onClick={() => handleAnnouncementEdit(announcement)}
-                            style={{
-                              minHeight: "26px",
-                              padding: "0 8px",
-                              borderRadius: "999px",
-                              border: `1px solid ${ADMIN_THEME.border}`,
-                              backgroundColor:
-                                editingAnnouncementId === announcement.id ? ADMIN_THEME.accentBg : ADMIN_THEME.surface,
-                              color: ADMIN_THEME.heading,
-                              fontSize: "9px",
-                              fontWeight: 800,
-                              letterSpacing: "0px",
-                              textTransform: "uppercase",
-                              cursor: "pointer",
-                            }}
-                          >
-                            {editingAnnouncementId === announcement.id ? "Editing" : "Edit"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleAnnouncementDelete(announcement.id)}
-                            style={{
-                              minHeight: "26px",
-                              padding: "0 8px",
-                              borderRadius: "999px",
-                              border: `1px solid ${ADMIN_THEME.accentBorder}`,
-                              backgroundColor: ADMIN_THEME.accentBg,
-                              color: ADMIN_THEME.accent,
-                              fontSize: "9px",
-                              fontWeight: 800,
-                              letterSpacing: "0px",
-                              textTransform: "uppercase",
-                              cursor: "pointer",
-                            }}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                      <h4 style={{ color: ADMIN_THEME.heading, fontSize: "16px", fontFamily: "var(--font-body)", fontStyle: "italic", fontWeight: 800, margin: "0 0 4px 0" }}>
-                        {announcement.title}
-                      </h4>
-                      <p style={{ color: ADMIN_THEME.muted, fontSize: "12px", lineHeight: 1.45, margin: 0 }}>{announcement.message}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-              {hasAnnouncements ? (
-                <p style={{ color: ADMIN_THEME.subtle, fontSize: "10px", lineHeight: 1.45, margin: "6px 0 0 0" }}>
-                  {classLinkedAnnouncements > 0
-                    ? `${classLinkedAnnouncements} updates are tied to a specific scheduled class.`
-                    : "All saved updates currently apply to the whole cohort."}
-                </p>
-              ) : null}
-            </Surface>
+        {/* ═══ 3. PRIORITY SESSION ═══ */}
+        {priorityClass ? (() => {
+          const priorityCounts = getSessionAttendanceCounts(selectedCohort.students, priorityClass.id);
+          const isPast = getSessionTimestamp(priorityClass) < Date.now();
 
-            <Surface style={{ padding: "19px", alignSelf: "start" }}>
-              <SectionTitle eyebrow="Class Timeline" title="Upcoming Sessions" subdetail={`${selectedCohort.classes.length} scheduled`} />
-              <div style={{ display: "grid", gap: "8px" }}>
-                {selectedCohort.classes.map((session) => {
-                  const active = selectedClass?.id === session.id;
+          return (
+            <Surface style={{ padding: "16px" }}>
+              <div style={{ display: "grid", gap: "12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", flexWrap: "wrap", alignItems: "flex-start" }}>
+                  <div style={{ display: "grid", gap: "4px" }}>
+                    <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", fontWeight: 700, textTransform: "uppercase", margin: 0 }}>
+                      {isPast ? "Most Recent Session" : "Next Up"}
+                    </p>
+                    <h3 style={{ color: ADMIN_THEME.heading, fontSize: "20px", fontFamily: "var(--font-heading)", fontWeight: 900, margin: 0, lineHeight: 1 }}>
+                      {priorityClass.topic}
+                    </h3>
+                    <p style={{ color: ADMIN_THEME.muted, fontSize: "12px", margin: 0 }}>
+                      {formatDateTime(priorityClass.date, priorityClass.time)} · {priorityClass.track} · Coach {priorityClass.coach}
+                    </p>
+                  </div>
+
+                  {priorityCounts.pending > 0 ? (
+                    <span style={{ padding: "6px 12px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.accentBorder}`, backgroundColor: ADMIN_THEME.accentBg, color: ADMIN_THEME.accent, fontSize: "11px", fontWeight: 800, textTransform: "uppercase" }}>
+                      {priorityCounts.pending} pending
+                    </span>
+                  ) : (
+                    <span style={{ padding: "6px 12px", borderRadius: "999px", border: "1px solid rgba(34,197,94,0.22)", backgroundColor: "rgba(34,197,94,0.10)", color: "#247A44", fontSize: "11px", fontWeight: 800, textTransform: "uppercase" }}>
+                      All marked
+                    </span>
+                  )}
+                </div>
+
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+                  <AttendanceBar counts={priorityCounts} />
+                </div>
+
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                  <span style={pillSummaryStyle("present")}>Present {priorityCounts.present}</span>
+                  <span style={pillSummaryStyle("late")}>Late {priorityCounts.late}</span>
+                  <span style={pillSummaryStyle("absent")}>Absent {priorityCounts.absent}</span>
+                  <span style={pillSummaryStyle("pending")}>Pending {priorityCounts.pending}</span>
+                </div>
+
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                  {onOpenAttendance ? (
+                    <ActionButton onClick={() => onOpenAttendance({ cohortId: selectedCohort.id, classId: priorityClass.id })} style={{ minWidth: "160px" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                        Manage Attendance <ArrowRight size={15} />
+                      </span>
+                    </ActionButton>
+                  ) : null}
+                  <ActionButton secondary onClick={() => bulkAttendance(priorityClass.id, "present")} style={{ minWidth: "120px" }}>
+                    All Present
+                  </ActionButton>
+                  <ActionButton secondary onClick={() => bulkAttendance(priorityClass.id, "absent")} style={{ minWidth: "120px" }}>
+                    All Absent
+                  </ActionButton>
+                </div>
+              </div>
+            </Surface>
+          );
+        })() : (
+          <Surface style={{ padding: "16px" }}>
+            <div style={{ padding: "12px", borderRadius: "14px", border: `1px dashed ${ADMIN_THEME.border}`, backgroundColor: ADMIN_THEME.surfaceSoft, display: "grid", gap: "8px" }}>
+              <p style={{ color: ADMIN_THEME.heading, fontSize: "14px", fontWeight: 800, margin: 0 }}>No sessions scheduled yet.</p>
+              <p style={{ color: ADMIN_THEME.muted, fontSize: "12px", lineHeight: 1.5, margin: 0 }}>Schedule the first class to start tracking attendance.</p>
+              {onOpenTeachingOperations ? (
+                <ActionButton onClick={() => onOpenTeachingOperations(selectedCohort.id)} style={{ justifySelf: "start", minWidth: "150px" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                    <Plus size={15} /> Schedule Session
+                  </span>
+                </ActionButton>
+              ) : null}
+            </div>
+          </Surface>
+        )}
+
+        {/* ═══ 4. ALL SESSIONS TABLE ═══ */}
+        {sortedSessions.length > 0 ? (
+          <Surface style={{ padding: "16px" }}>
+            <div style={{ display: "grid", gap: "10px" }}>
+              <SectionTitle
+                eyebrow="Sessions"
+                title="Attendance By Session"
+                detail={`${sortedSessions.length} session${sortedSessions.length === 1 ? "" : "s"} scheduled`}
+              />
+
+              <div className="cd-session-table">
+                <div className="cd-session-row cd-session-header">
+                  <div className="cd-session-cell">Date</div>
+                  <div className="cd-session-cell">Topic</div>
+                  <div className="cd-session-cell">Coach</div>
+                  <div className="cd-session-cell">Attendance</div>
+                  <div className="cd-session-cell">Actions</div>
+                </div>
+
+                {sortedSessions.map((session) => {
+                  const counts = getSessionAttendanceCounts(selectedCohort.students, session.id);
+                  const isExpanded = expandedSessionId === session.id;
+                  const isPriority = priorityClass?.id === session.id;
 
                   return (
-                    <button
-                      key={session.id}
-                      type="button"
-                      onClick={() => setSelectedClassId(session.id)}
-                      style={{
-                        width: "100%",
-                        textAlign: "left",
-                        padding: "14px 15px",
-                        minHeight: "112px",
-                        borderRadius: "16px",
-                        border: `1px solid ${active ? ADMIN_THEME.accentBorder : ADMIN_THEME.borderSoft}`,
-                        background: active
-                          ? "linear-gradient(135deg, rgba(200,52,46,0.08) 0%, #FFFFFF 100%)"
-                          : ADMIN_THEME.surfaceSoft,
-                        cursor: "pointer",
-                        display: "grid",
-                        alignContent: "start",
-                      }}
-                    >
-                      <p style={{ color: active ? ADMIN_THEME.accent : ADMIN_THEME.subtle, fontSize: "10px", fontWeight: 500, letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 6px 0" }}>
-                        {session.track}
-                      </p>
-                      <h4 style={{ color: ADMIN_THEME.heading, fontSize: "17px", fontFamily: "var(--font-body)", fontStyle: "italic", fontWeight: 800, margin: "0 0 5px 0" }}>
-                        {session.topic}
-                      </h4>
-                      <p style={{ color: ADMIN_THEME.muted, fontSize: "13px", margin: 0 }}>{formatDateTime(session.date, session.time)} · {session.coach}</p>
-                    </button>
+                    <div key={session.id}>
+                      <div
+                        className="cd-session-row"
+                        style={{
+                          backgroundColor: isPriority ? "rgba(200,52,46,0.03)" : ADMIN_THEME.surface,
+                          cursor: "pointer",
+                        }}
+                        onClick={() => setExpandedSessionId(isExpanded ? null : session.id)}
+                      >
+                        <div className="cd-session-cell">
+                          <div style={{ display: "grid", gap: "2px" }}>
+                            <span style={{ fontSize: "12px", fontWeight: 700, color: ADMIN_THEME.heading }}>
+                              {formatDateTime(session.date, session.time)}
+                            </span>
+                            {isPriority ? (
+                              <span style={{ color: ADMIN_THEME.accent, fontSize: "9px", fontWeight: 800, textTransform: "uppercase" }}>
+                                {getSessionTimestamp(session) >= Date.now() ? "Next up" : "Most recent"}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="cd-session-cell" style={{ fontWeight: 700 }}>
+                          {session.topic}
+                          <div style={{ color: ADMIN_THEME.muted, fontSize: "11px", fontWeight: 400 }}>{session.track}</div>
+                        </div>
+                        <div className="cd-session-cell" style={{ color: ADMIN_THEME.muted, fontSize: "11px" }}>
+                          {session.coach}
+                        </div>
+                        <div className="cd-session-cell">
+                          <div style={{ display: "grid", gap: "4px" }}>
+                            <AttendanceBar counts={counts} />
+                            <div style={{ display: "flex", gap: "6px", fontSize: "10px" }}>
+                              <span style={{ color: ATTENDANCE_COLORS.present.text }}>{counts.present}P</span>
+                              <span style={{ color: ATTENDANCE_COLORS.late.text }}>{counts.late}L</span>
+                              <span style={{ color: ATTENDANCE_COLORS.absent.text }}>{counts.absent}A</span>
+                              {counts.pending > 0 ? <span style={{ color: ATTENDANCE_COLORS.pending.text }}>{counts.pending}?</span> : null}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="cd-session-cell">
+                          {onOpenAttendance ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onOpenAttendance({ cohortId: selectedCohort.id, classId: session.id });
+                              }}
+                              style={{
+                                padding: "5px 10px",
+                                borderRadius: "8px",
+                                border: `1px solid ${counts.pending > 0 ? ADMIN_THEME.accentBorder : ADMIN_THEME.border}`,
+                                backgroundColor: counts.pending > 0 ? ADMIN_THEME.accentBg : ADMIN_THEME.surface,
+                                color: counts.pending > 0 ? ADMIN_THEME.accent : ADMIN_THEME.heading,
+                                fontSize: "10px",
+                                fontWeight: 800,
+                                textTransform: "uppercase",
+                                cursor: "pointer",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {counts.pending > 0 ? "Mark Now" : "Review"}
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      {isExpanded ? (
+                        <div className="cd-expand-panel">
+                          <ActionButton secondary onClick={() => bulkAttendance(session.id, "present")} style={{ minWidth: "110px", minHeight: "32px", fontSize: "10px" }}>
+                            All Present
+                          </ActionButton>
+                          <ActionButton secondary onClick={() => bulkAttendance(session.id, "absent")} style={{ minWidth: "110px", minHeight: "32px", fontSize: "10px" }}>
+                            All Absent
+                          </ActionButton>
+                          {onOpenAttendance ? (
+                            <ActionButton onClick={() => onOpenAttendance({ cohortId: selectedCohort.id, classId: session.id })} style={{ minWidth: "150px", minHeight: "32px", fontSize: "10px" }}>
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                                Open Attendance <ArrowRight size={13} />
+                              </span>
+                            </ActionButton>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
                   );
                 })}
               </div>
-            </Surface>
-          </div>
+            </div>
+          </Surface>
+        ) : null}
 
-          <div className="cohort-stack">
-            <Surface style={{ padding: "19px", alignSelf: "start" }}>
-              <div style={{ display: "grid", gap: "12px", marginBottom: "12px" }}>
-                <p
-                  style={{
-                    color: ADMIN_THEME.accent,
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    letterSpacing: "0px",
-                    textTransform: "uppercase",
-                    margin: 0,
-                  }}
-                >
-                  Attendance
-                </p>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "16px", flexWrap: "wrap" }}>
-                  <h2
-                    style={{
-                      color: ADMIN_THEME.heading,
-                      fontSize: "28px",
-                      fontFamily: "var(--font-heading)",
-                      fontWeight: 900,
-                      letterSpacing: "0px",
-                      textTransform: "uppercase",
-                      margin: 0,
-                      lineHeight: 1,
-                    }}
-                  >
-                    Mark Attendance
-                  </h2>
-                  <div style={{ display: "grid", gap: "8px", justifyItems: "end" }}>
-                    <span
-                      style={{
-                        color: ADMIN_THEME.subtle,
-                        fontSize: "12px",
-                        letterSpacing: "0px",
-                        textTransform: "uppercase",
-                      }}
-                    >
-                      {selectedClass ? formatDateTime(selectedClass.date, selectedClass.time) : "Select a class"}
-                    </span>
-                    <ActionButton
-                      onClick={() => {
-                        if (onOpenAttendance) {
-                          onOpenAttendance({
-                            cohortId: selectedCohort.id,
-                            classId: selectedClass?.id ?? "",
-                          });
-                          return;
-                        }
+        {/* ═══ 5. ANNOUNCEMENTS ═══ */}
+        <Surface style={{ padding: "16px" }}>
+          <div style={{ display: "grid", gap: "12px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", flexWrap: "wrap", alignItems: "flex-start" }}>
+              <SectionTitle
+                eyebrow="Announcements"
+                title="Cohort Updates"
+                detail={`${selectedCohort.announcements.length} total · ${activeAnnouncementCount} active`}
+              />
+              <ActionButton
+                secondary={showAnnouncementForm}
+                onClick={() => {
+                  setShowAnnouncementForm(!showAnnouncementForm);
+                  if (!showAnnouncementForm) setNewAnnouncement(emptyAnnouncementDraft());
+                }}
+                style={{ minWidth: "160px" }}
+              >
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                  {showAnnouncementForm ? <X size={15} /> : <Plus size={15} />}
+                  {showAnnouncementForm ? "Cancel" : "New Announcement"}
+                </span>
+              </ActionButton>
+            </div>
 
-                        bulkAttendance("present");
-                      }}
-                      style={{ minWidth: "171px" }}
-                    >
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                        Mark Attendance <ArrowRight size={16} />
-                      </span>
-                    </ActionButton>
-                  </div>
-                </div>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
-                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                  <span style={pillSummaryStyle("present")}>Present {attendanceCounts.present}</span>
-                  <span style={pillSummaryStyle("late")}>Late {attendanceCounts.late}</span>
-                  <span style={pillSummaryStyle("absent")}>Absent {attendanceCounts.absent}</span>
-                  <span style={pillSummaryStyle("pending")}>Pending {attendanceCounts.pending}</span>
-                </div>
-                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                  <ActionButton secondary onClick={() => bulkAttendance("present")} style={{ minWidth: "156px" }}>Mark All Present</ActionButton>
-                  <ActionButton secondary onClick={() => bulkAttendance("absent")} style={{ minWidth: "148px" }}>Mark All Absent</ActionButton>
-                </div>
-              </div>
-            </Surface>
-
-            <div className="cohort-middle-grid">
-              <Surface style={{ padding: "19px", minHeight: "224px", alignSelf: "start" }}>
-                <SectionTitle
-                  eyebrow="Announcements"
-                  title="Send Cohort Update"
-                  detail={selectedCohort.name}
-                />
-                <form onSubmit={handleAnnouncementSubmit} className="cohort-form-grid">
-                  <div className="cohort-full-span">
-                    <FieldLabel>Relevant Class</FieldLabel>
+            {/* compose form (toggled) */}
+            {showAnnouncementForm ? (
+              <div style={{ padding: "16px", borderRadius: "16px", border: `1px solid ${ADMIN_THEME.accentBorder}`, backgroundColor: "rgba(200,52,46,0.03)" }}>
+                <form onSubmit={handleAnnouncementSubmit} className="cd-form-grid">
+                  <div>
+                    <FieldLabel>Target</FieldLabel>
                     <FieldShell>
                       <select
                         value={newAnnouncement.classId ?? ""}
-                        onChange={(event) =>
-                          setNewAnnouncement((current) => ({
-                            ...current,
-                            classId: event.target.value,
-                          }))
-                        }
+                        onChange={(e) => setNewAnnouncement((c) => ({ ...c, classId: e.target.value }))}
                         style={inputStyle}
                       >
                         <option value="">Whole Cohort</option>
@@ -778,301 +673,136 @@ export function AdminCohortDashboard({
                       </select>
                     </FieldShell>
                   </div>
-                  <div className="cohort-full-span">
-                    <FieldLabel>Announcement Title</FieldLabel>
+                  <div>
+                    <FieldLabel>Expires On</FieldLabel>
                     <FieldShell>
                       <input
-                        value={newAnnouncement.title}
-                        onChange={(event) =>
-                          setNewAnnouncement((current) => ({
-                            ...current,
-                            title: event.target.value,
-                          }))
-                        }
-                        placeholder="Session reminder, arrival note, or parent update"
+                        type="date"
+                        value={newAnnouncement.expiresAt}
+                        onChange={(e) => setNewAnnouncement((c) => ({ ...c, expiresAt: e.target.value }))}
                         style={inputStyle}
                       />
                     </FieldShell>
                   </div>
-                  <div className="cohort-full-span">
+                  <div className="cd-full-span">
+                    <FieldLabel>Title</FieldLabel>
+                    <FieldShell>
+                      <input
+                        value={newAnnouncement.title}
+                        onChange={(e) => setNewAnnouncement((c) => ({ ...c, title: e.target.value }))}
+                        placeholder="Reminder, update, or coaching note"
+                        style={inputStyle}
+                      />
+                    </FieldShell>
+                  </div>
+                  <div className="cd-full-span">
                     <FieldLabel>Message</FieldLabel>
                     <FieldShell>
                       <textarea
                         value={newAnnouncement.message}
-                        onChange={(event) =>
-                          setNewAnnouncement((current) => ({
-                            ...current,
-                            message: event.target.value,
-                          }))
-                        }
-                        placeholder="Write the exact update this cohort should receive."
+                        onChange={(e) => setNewAnnouncement((c) => ({ ...c, message: e.target.value }))}
+                        placeholder="Write the update for this cohort."
                         style={textareaStyle}
                       />
                     </FieldShell>
                   </div>
-                  <div className="cohort-full-span" style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
-                    <p style={{ color: ADMIN_THEME.subtle, fontSize: "12px", margin: 0 }}>
-                      Target a specific class when the update is only relevant to one session, or leave it cohort-wide for general communication.
-                    </p>
-                    <ActionButton type="submit" style={{ minWidth: "176px" }}>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                        <Megaphone size={16} /> Send Update
+                  <div className="cd-full-span" style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
+                    <ActionButton secondary type="button" onClick={() => setShowAnnouncementForm(false)} style={{ minWidth: "100px" }}>
+                      Cancel
+                    </ActionButton>
+                    <ActionButton type="submit" style={{ minWidth: "150px" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                        <Megaphone size={15} /> Send
                       </span>
                     </ActionButton>
                   </div>
                 </form>
-              </Surface>
-
-              <div className="cohort-cta-stack">
-                <Surface style={{ padding: "19px", minHeight: "108px", alignSelf: "start" }}>
-                  <SectionTitle eyebrow="Cohort Management" title="Manage Students" subdetail={selectedCohort.name} />
-                  <div style={{ display: "grid", gap: "10px" }}>
-                    <p style={{ color: ADMIN_THEME.muted, fontSize: "13px", lineHeight: 1.65, margin: 0 }}>
-                      Student search, coach reports, enrollment, and roster edits now live together in cohort management so
-                      staff can work from the student list without bouncing between panels.
-                    </p>
-                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                      <span
-                        style={{
-                          padding: "7px 10px",
-                          borderRadius: "999px",
-                          backgroundColor: ADMIN_THEME.accentBg,
-                          border: `1px solid ${ADMIN_THEME.accentBorder}`,
-                          color: ADMIN_THEME.accent,
-                          fontSize: "10px",
-                          letterSpacing: "0px",
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        {selectedCohort.students.length} students
-                      </span>
-                      <span
-                        style={{
-                          padding: "7px 10px",
-                          borderRadius: "999px",
-                          backgroundColor: ADMIN_THEME.surfaceSoft,
-                          border: `1px solid ${ADMIN_THEME.borderSoft}`,
-                          color: ADMIN_THEME.muted,
-                          fontSize: "10px",
-                          letterSpacing: "0px",
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        {selectedCohort.reports.length} reports
-                      </span>
-                      <span
-                        style={{
-                          padding: "7px 10px",
-                          borderRadius: "999px",
-                          backgroundColor: ADMIN_THEME.surfaceSoft,
-                          border: `1px solid ${ADMIN_THEME.borderSoft}`,
-                          color: ADMIN_THEME.muted,
-                          fontSize: "10px",
-                          letterSpacing: "0px",
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        {availableSeats} seats open
-                      </span>
-                    </div>
-                    <ActionButton
-                      onClick={() => onOpenCohortManagement?.(selectedCohort.id)}
-                      style={{ justifySelf: "start", minWidth: "210px" }}
-                    >
-                      Open Cohort Management
-                    </ActionButton>
-                  </div>
-                </Surface>
-
-                <Surface style={{ padding: "19px", minHeight: "108px", alignSelf: "start" }}>
-                  <SectionTitle eyebrow="Teaching Operations" title="Schedule + Syllabus" subdetail={selectedCohort.name} />
-                  <div style={{ display: "grid", gap: "10px" }}>
-                    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                      <span
-                        style={{
-                          padding: "7px 10px",
-                          borderRadius: "999px",
-                          backgroundColor: ADMIN_THEME.accentBg,
-                          border: `1px solid ${ADMIN_THEME.accentBorder}`,
-                          color: ADMIN_THEME.accent,
-                          fontSize: "10px",
-                          letterSpacing: "0px",
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        {selectedCohort.classes.length} sessions
-                      </span>
-                      <span
-                        style={{
-                          padding: "7px 10px",
-                          borderRadius: "999px",
-                          backgroundColor: ADMIN_THEME.surfaceSoft,
-                          border: `1px solid ${ADMIN_THEME.borderSoft}`,
-                          color: ADMIN_THEME.muted,
-                          fontSize: "10px",
-                          letterSpacing: "0px",
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        {selectedCohort.syllabus.length} modules
-                      </span>
-                      <span
-                        style={{
-                          padding: "7px 10px",
-                          borderRadius: "999px",
-                          backgroundColor: ADMIN_THEME.surfaceSoft,
-                          border: `1px solid ${ADMIN_THEME.borderSoft}`,
-                          color: ADMIN_THEME.muted,
-                          fontSize: "10px",
-                          letterSpacing: "0px",
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        {liveSyllabus} live
-                      </span>
-                    </div>
-                    <div style={{ display: "grid", gap: "4px" }}>
-                      <p style={{ color: ADMIN_THEME.heading, fontSize: "14px", fontWeight: 700, margin: 0 }}>
-                        {priorityClass ? `Next session: ${priorityClass.topic}` : "No session scheduled yet"}
-                      </p>
-                      <p style={{ color: ADMIN_THEME.subtle, fontSize: "11px", lineHeight: 1.45, margin: 0 }}>
-                        {teachingLeadModule
-                          ? `Lead module: ${teachingLeadModule.weekLabel} - ${teachingLeadModule.title}`
-                          : "Add a syllabus block to define the next teaching objective."}
-                      </p>
-                    </div>
-                    <ActionButton
-                      onClick={() => onOpenTeachingOperations?.(selectedCohort.id)}
-                      style={{ justifySelf: "start", minWidth: "210px" }}
-                    >
-                      Open Teaching Operations
-                    </ActionButton>
-                  </div>
-                </Surface>
               </div>
-            </div>
+            ) : null}
 
-            <Surface style={{ padding: "19px", alignSelf: "start" }}>
-              <SectionTitle eyebrow="Report Log" title="Recent Reports" detail={`${selectedCohort.reports.length} stored`} />
-              <div style={{ display: "grid", gap: "8px" }}>
-                {selectedCohort.reports.length === 0 ? (
-                  <div
-                    style={{
-                      padding: "18px",
-                      borderRadius: "16px",
-                      border: `1px dashed ${ADMIN_THEME.border}`,
-                      color: ADMIN_THEME.subtle,
-                      fontSize: "14px",
-                      backgroundColor: ADMIN_THEME.surfaceSoft,
-                    }}
-                  >
-                    No reports logged yet for this cohort.
-                  </div>
-                ) : (
-                  selectedCohort.reports.map((report) => {
-                    const student = selectedCohort.students.find((entry) => entry.id === report.studentId);
-
-                    return (
-                      <div
-                        key={report.id}
-                        style={{
-                          padding: "13px 12px",
-                          minHeight: "131px",
-                          borderRadius: "16px",
-                          ...nestedCardStyle,
-                        }}
-                      >
-                        <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 6px 0" }}>
-                          {student?.name ?? "Student"} · {new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date(report.createdAt))}
-                        </p>
-                        <h4 style={{ color: ADMIN_THEME.heading, fontSize: "18px", fontFamily: "var(--font-body)", fontStyle: "italic", fontWeight: 800, margin: "0 0 8px 0" }}>
-                          {report.title}
-                        </h4>
-                        <p style={{ color: ADMIN_THEME.muted, fontSize: "14px", lineHeight: 1.6, margin: "0 0 8px 0" }}>{report.summary}</p>
-                        {report.recommendation ? (
-                          <p style={{ color: ADMIN_THEME.subtle, fontSize: "13px", lineHeight: 1.5, margin: 0 }}>
-                            Next step: {report.recommendation}
-                          </p>
-                        ) : null}
-                      </div>
-                    );
-                  })
-                )}
+            {/* pinned announcements */}
+            {pinnedAnnouncements.length > 0 ? (
+              <div style={{ display: "grid", gap: "6px" }}>
+                <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", fontWeight: 700, textTransform: "uppercase", margin: 0 }}>Pinned</p>
+                <div className="cd-announce-grid">
+                  {pinnedAnnouncements.map((announcement) => (
+                    <AnnouncementCard
+                      key={announcement.id}
+                      announcement={announcement}
+                      classes={selectedCohort.classes}
+                      isEditing={editingAnnouncementId === announcement.id}
+                      onPin={() => handleAnnouncementPin(announcement.id)}
+                      onEdit={() => handleAnnouncementEdit(announcement)}
+                      onDelete={() => handleAnnouncementDelete(announcement.id)}
+                    />
+                  ))}
+                </div>
               </div>
-            </Surface>
+            ) : null}
+
+            {/* recent announcements */}
+            {recentAnnouncements.length > 0 ? (
+              <div style={{ display: "grid", gap: "6px" }}>
+                {pinnedAnnouncements.length > 0 ? (
+                  <p style={{ color: ADMIN_THEME.subtle, fontSize: "10px", fontWeight: 700, textTransform: "uppercase", margin: 0 }}>Recent</p>
+                ) : null}
+                <div className="cd-announce-grid">
+                  {recentAnnouncements.map((announcement) => (
+                    <AnnouncementCard
+                      key={announcement.id}
+                      announcement={announcement}
+                      classes={selectedCohort.classes}
+                      isEditing={editingAnnouncementId === announcement.id}
+                      onPin={() => handleAnnouncementPin(announcement.id)}
+                      onEdit={() => handleAnnouncementEdit(announcement)}
+                      onDelete={() => handleAnnouncementDelete(announcement.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {selectedCohort.announcements.length === 0 ? (
+              <p style={{ color: ADMIN_THEME.subtle, fontSize: "12px", lineHeight: 1.45, margin: 0 }}>
+                No announcements yet. Create one to notify this cohort.
+              </p>
+            ) : null}
           </div>
-        </div>
+        </Surface>
       </div>
 
+      {/* ═══ EDIT ANNOUNCEMENT MODAL ═══ */}
       {editingAnnouncement ? (
         <div
           onClick={handleAnnouncementEditCancel}
-          style={{
-            position: "fixed",
-            inset: 0,
-            backgroundColor: "rgba(22,18,14,0.38)",
-            display: "grid",
-            placeItems: "center",
-            padding: "24px",
-            zIndex: 45,
-          }}
+          style={{ position: "fixed", inset: 0, backgroundColor: "rgba(22,18,14,0.38)", display: "grid", placeItems: "center", padding: "24px", zIndex: 45 }}
         >
           <div
-            onClick={(event) => event.stopPropagation()}
-            style={{
-              width: "min(680px, 100%)",
-              padding: "18px",
-              borderRadius: "20px",
-              background: "linear-gradient(180deg, #FFFFFF 0%, #FBF8F4 100%)",
-              border: `1px solid ${ADMIN_THEME.border}`,
-              boxShadow: "0 24px 70px rgba(22,18,14,0.22)",
-              display: "grid",
-              gap: "12px",
-            }}
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(680px, 100%)", padding: "18px", borderRadius: "20px", background: "linear-gradient(180deg, #FFFFFF 0%, #FBF8F4 100%)", border: `1px solid ${ADMIN_THEME.border}`, boxShadow: "0 24px 70px rgba(22,18,14,0.22)", display: "grid", gap: "12px" }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start" }}>
               <div style={{ display: "grid", gap: "4px" }}>
-                <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", fontWeight: 700, letterSpacing: "0px", textTransform: "uppercase", margin: 0 }}>
-                  Cohort Update
-                </p>
-                <h3 style={{ color: ADMIN_THEME.heading, fontSize: "24px", fontFamily: "var(--font-heading)", margin: 0, lineHeight: 1 }}>
-                  Edit Announcement
-                </h3>
-                <p style={{ color: ADMIN_THEME.muted, fontSize: "12px", margin: 0 }}>
-                  Update the title, target, or message here without reusing the send-update form.
-                </p>
+                <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", fontWeight: 700, textTransform: "uppercase", margin: 0 }}>Cohort Update</p>
+                <h3 style={{ color: ADMIN_THEME.heading, fontSize: "24px", fontFamily: "var(--font-heading)", margin: 0, lineHeight: 1 }}>Edit Announcement</h3>
+                <p style={{ color: ADMIN_THEME.muted, fontSize: "12px", margin: 0 }}>Update the title, target, or message.</p>
               </div>
               <button
                 type="button"
                 onClick={handleAnnouncementEditCancel}
-                style={{
-                  width: "34px",
-                  height: "34px",
-                  borderRadius: "999px",
-                  border: `1px solid ${ADMIN_THEME.border}`,
-                  backgroundColor: ADMIN_THEME.surface,
-                  color: ADMIN_THEME.heading,
-                  display: "grid",
-                  placeItems: "center",
-                  cursor: "pointer",
-                }}
+                style={{ width: "34px", height: "34px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.border}`, backgroundColor: ADMIN_THEME.surface, color: ADMIN_THEME.heading, display: "grid", placeItems: "center", cursor: "pointer" }}
               >
                 <X size={16} />
               </button>
             </div>
 
-            <form onSubmit={handleAnnouncementEditSubmit} className="cohort-form-grid">
-              <div className="cohort-full-span">
-                <FieldLabel>Relevant Class</FieldLabel>
+            <form onSubmit={handleAnnouncementEditSubmit} className="cd-form-grid">
+              <div>
+                <FieldLabel>Target</FieldLabel>
                 <FieldShell>
                   <select
                     value={editingAnnouncementDraft.classId ?? ""}
-                    onChange={(event) =>
-                      setEditingAnnouncementDraft((current) => ({
-                        ...current,
-                        classId: event.target.value,
-                      }))
-                    }
+                    onChange={(e) => setEditingAnnouncementDraft((c) => ({ ...c, classId: e.target.value }))}
                     style={inputStyle}
                   >
                     <option value="">Whole Cohort</option>
@@ -1084,57 +814,137 @@ export function AdminCohortDashboard({
                   </select>
                 </FieldShell>
               </div>
-              <div className="cohort-full-span">
-                <FieldLabel>Announcement Title</FieldLabel>
+              <div>
+                <FieldLabel>Expires On</FieldLabel>
+                <FieldShell>
+                  <input
+                    type="date"
+                    value={editingAnnouncementDraft.expiresAt}
+                    onChange={(e) => setEditingAnnouncementDraft((c) => ({ ...c, expiresAt: e.target.value }))}
+                    style={inputStyle}
+                  />
+                </FieldShell>
+              </div>
+              <div className="cd-full-span">
+                <FieldLabel>Title</FieldLabel>
                 <FieldShell>
                   <input
                     value={editingAnnouncementDraft.title}
-                    onChange={(event) =>
-                      setEditingAnnouncementDraft((current) => ({
-                        ...current,
-                        title: event.target.value,
-                      }))
-                    }
+                    onChange={(e) => setEditingAnnouncementDraft((c) => ({ ...c, title: e.target.value }))}
                     placeholder="Session reminder, arrival note, or parent update"
                     style={inputStyle}
                   />
                 </FieldShell>
               </div>
-              <div className="cohort-full-span">
+              <div className="cd-full-span">
                 <FieldLabel>Message</FieldLabel>
                 <FieldShell>
                   <textarea
                     value={editingAnnouncementDraft.message}
-                    onChange={(event) =>
-                      setEditingAnnouncementDraft((current) => ({
-                        ...current,
-                        message: event.target.value,
-                      }))
-                    }
+                    onChange={(e) => setEditingAnnouncementDraft((c) => ({ ...c, message: e.target.value }))}
                     placeholder="Write the exact update this cohort should receive."
                     style={textareaStyle}
                   />
                 </FieldShell>
               </div>
-              <div className="cohort-full-span" style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
-                <p style={{ color: ADMIN_THEME.subtle, fontSize: "12px", margin: 0 }}>
-                  Save the revised announcement back into the recent updates log from this popup.
-                </p>
-                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                  <ActionButton secondary type="button" onClick={handleAnnouncementEditCancel} style={{ minWidth: "138px" }}>
-                    Cancel
-                  </ActionButton>
-                  <ActionButton type="submit" style={{ minWidth: "162px" }}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                      <Megaphone size={16} /> Save Update
-                    </span>
-                  </ActionButton>
-                </div>
+              <div className="cd-full-span" style={{ display: "flex", justifyContent: "flex-end", gap: "10px", flexWrap: "wrap" }}>
+                <ActionButton secondary type="button" onClick={handleAnnouncementEditCancel} style={{ minWidth: "120px" }}>
+                  Cancel
+                </ActionButton>
+                <ActionButton type="submit" style={{ minWidth: "162px" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                    <Megaphone size={16} /> Save Update
+                  </span>
+                </ActionButton>
               </div>
             </form>
           </div>
         </div>
       ) : null}
     </>
+  );
+}
+
+/* ── Announcement card sub-component ── */
+
+function AnnouncementCard({
+  announcement,
+  classes,
+  isEditing,
+  onPin,
+  onEdit,
+  onDelete,
+}: {
+  announcement: AnnouncementEntry;
+  classes: Cohort["classes"];
+  isEditing: boolean;
+  onPin: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const isExpired = announcement.expiresAt ? new Date(announcement.expiresAt) < new Date() : false;
+
+  return (
+    <div
+      style={{
+        padding: "12px",
+        borderRadius: "14px",
+        backgroundColor: ADMIN_THEME.surface,
+        border: isEditing
+          ? `1px solid ${ADMIN_THEME.accentBorder}`
+          : announcement.pinned
+            ? "1px solid rgba(200,52,46,0.15)"
+            : `1px solid ${ADMIN_THEME.borderSoft}`,
+        opacity: isExpired ? 0.6 : 1,
+        display: "grid",
+        gap: "6px",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", alignItems: "flex-start" }}>
+        <div style={{ display: "grid", gap: "2px" }}>
+          <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", textTransform: "uppercase", margin: 0 }}>
+            {announcementTargetLabel(announcement.classId, classes)}
+          </p>
+          <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ color: ADMIN_THEME.subtle, fontSize: "10px", textTransform: "uppercase" }}>
+              {new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date(announcement.createdAt))}
+            </span>
+            {announcement.pinned ? <span style={{ color: ADMIN_THEME.accent, fontSize: "9px", fontWeight: 800, textTransform: "uppercase" }}>Pinned</span> : null}
+            {isExpired ? <span style={{ color: ADMIN_THEME.subtle, fontSize: "9px", fontWeight: 800, textTransform: "uppercase" }}>Expired</span> : null}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: "4px", flexShrink: 0 }}>
+          {([
+            { label: announcement.pinned ? "Unpin" : "Pin", action: onPin, highlight: announcement.pinned },
+            { label: "Edit", action: onEdit, highlight: isEditing },
+            { label: "Del", action: onDelete, highlight: true },
+          ] as const).map((btn) => (
+            <button
+              key={btn.label}
+              type="button"
+              onClick={btn.action}
+              style={{
+                minHeight: "22px",
+                padding: "0 7px",
+                borderRadius: "999px",
+                border: `1px solid ${btn.highlight ? ADMIN_THEME.accentBorder : ADMIN_THEME.border}`,
+                backgroundColor: btn.highlight ? ADMIN_THEME.accentBg : ADMIN_THEME.surface,
+                color: btn.highlight ? ADMIN_THEME.accent : ADMIN_THEME.muted,
+                fontSize: "9px",
+                fontWeight: 800,
+                textTransform: "uppercase",
+                cursor: "pointer",
+              }}
+            >
+              {btn.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <h4 style={{ color: ADMIN_THEME.heading, fontSize: "14px", fontWeight: 800, margin: 0 }}>{announcement.title}</h4>
+      <p style={{ color: ADMIN_THEME.muted, fontSize: "12px", lineHeight: 1.4, margin: 0 }}>{announcement.message}</p>
+    </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { ArrowLeft, Check, Clock3, MoreHorizontal, Search, X } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, Clock3, MoreHorizontal, Search, X } from "lucide-react";
 import {
   ActionButton,
   ADMIN_THEME,
@@ -139,6 +139,7 @@ interface AdminAttendancePageProps {
   initialClassId?: string;
   onBackToDashboard?: () => void;
   allowCohortSwitch?: boolean;
+  onSelectionChange?: (context: { cohortId: string; classId: string }) => void;
 }
 
 export function AdminAttendancePage({
@@ -146,6 +147,7 @@ export function AdminAttendancePage({
   initialClassId,
   onBackToDashboard,
   allowCohortSwitch = true,
+  onSelectionChange,
 }: AdminAttendancePageProps) {
   const [cohorts, setCohorts] = useState<Cohort[]>(() => loadCohorts());
   const [selectedCohortId, setSelectedCohortId] = useState(() => initialCohortId ?? loadCohorts()[0]?.id ?? "");
@@ -166,6 +168,11 @@ export function AdminAttendancePage({
   const selectedCohort = cohorts.find((cohort) => cohort.id === selectedCohortId) ?? cohorts[0];
 
   useEffect(() => {
+    setSearchQuery("");
+    setStatusFilter("all");
+  }, [selectedCohortId]);
+
+  useEffect(() => {
     if (!selectedCohort) {
       return;
     }
@@ -182,6 +189,17 @@ export function AdminAttendancePage({
     }
   }, [cohorts, initialClassId, selectedCohort, selectedCohortId, selectedClassId]);
 
+  useEffect(() => {
+    if (!selectedCohort) {
+      return;
+    }
+
+    onSelectionChange?.({
+      cohortId: selectedCohort.id,
+      classId: selectedClassId,
+    });
+  }, [onSelectionChange, selectedClassId, selectedCohort]);
+
   if (!selectedCohort) {
     return null;
   }
@@ -192,7 +210,9 @@ export function AdminAttendancePage({
     (left, right) => getSessionTimestamp(right.date, right.time) - getSessionTimestamp(left.date, left.time),
   );
 
-  const attendanceCounts = selectedCohort.students.reduce(
+  const activeStudents = selectedCohort.students.filter((student) => (student.status ?? "active") === "active");
+
+  const attendanceCounts = activeStudents.reduce(
     (counts, student) => {
       const state = mapAttendanceState(selectedClass ? student.attendance[selectedClass.id] : undefined);
       counts[state] += 1;
@@ -204,12 +224,13 @@ export function AdminAttendancePage({
   const visibleStudents = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
 
-    return selectedCohort.students.filter((student) => {
+    return activeStudents.filter((student) => {
       const state = mapAttendanceState(selectedClass ? student.attendance[selectedClass.id] : undefined);
       const matchesQuery = !query || student.name.toLowerCase().includes(query);
       const matchesFilter = statusFilter === "all" || state === statusFilter;
       return matchesQuery && matchesFilter;
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery, selectedClass, selectedCohort.students, statusFilter]);
 
   function updateSelectedCohort(mutator: (cohort: Cohort) => Cohort) {
@@ -246,13 +267,18 @@ export function AdminAttendancePage({
 
     updateSelectedCohort((cohort) => ({
       ...cohort,
-      students: cohort.students.map((student) => ({
-        ...student,
-        attendance: {
-          ...student.attendance,
-          [selectedClassId]: nextState,
-        },
-      })),
+      students: cohort.students.map((student) => {
+        if ((student.status ?? "active") !== "active") {
+          return student;
+        }
+        return {
+          ...student,
+          attendance: {
+            ...student.attendance,
+            [selectedClassId]: nextState,
+          },
+        };
+      }),
     }));
   }
 
@@ -292,12 +318,12 @@ export function AdminAttendancePage({
           padding: "0 0 28px",
         }}
       >
-        <div style={{ padding: "29px 29px 0" }}>
+        <div>
           <div
             style={{
               display: "grid",
-              gap: "24px",
-              padding: "28px",
+              gap: "18px",
+              padding: "22px",
               borderRadius: "22px",
               border: `1px solid ${ADMIN_THEME.border}`,
               background:
@@ -306,23 +332,6 @@ export function AdminAttendancePage({
             }}
           >
             <div style={{ display: "grid", gap: "10px" }}>
-              <div style={{ display: "flex", justifyContent: "flex-start" }}>
-                <ActionButton
-                  onClick={() => {
-                    if (onBackToDashboard) {
-                      onBackToDashboard();
-                      return;
-                    }
-
-                    window.location.hash = "#admin";
-                  }}
-                  style={{ minWidth: "188px" }}
-                >
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                    <ArrowLeft size={16} /> Back To Dashboard
-                  </span>
-                </ActionButton>
-              </div>
               <p
                 style={{
                   color: ADMIN_THEME.accent,
@@ -336,20 +345,44 @@ export function AdminAttendancePage({
                 Attendance
               </p>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
-                <h2
-                  style={{
-                    color: ADMIN_THEME.heading,
-                    fontSize: "32px",
-                    fontFamily: "var(--font-heading)",
-                    fontWeight: 900,
-                    letterSpacing: "0px",
-                    textTransform: "uppercase",
-                    margin: 0,
-                    lineHeight: 1,
-                  }}
-                >
-                  Mark Attendance
-                </h2>
+                <div style={{ display: "flex", gap: "12px", alignItems: "flex-start", flexWrap: "wrap" }}>
+                  {onBackToDashboard ? (
+                    <button
+                      type="button"
+                      onClick={onBackToDashboard}
+                      style={{
+                        width: "36px",
+                        height: "36px",
+                        borderRadius: "12px",
+                        border: `1px solid ${ADMIN_THEME.border}`,
+                        backgroundColor: ADMIN_THEME.surface,
+                        color: ADMIN_THEME.heading,
+                        display: "grid",
+                        placeItems: "center",
+                        cursor: "pointer",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <ArrowLeft size={16} />
+                    </button>
+                  ) : null}
+                  <div>
+                    <h2
+                      style={{
+                        color: ADMIN_THEME.heading,
+                        fontSize: "28px",
+                        fontFamily: "var(--font-heading)",
+                        fontWeight: 900,
+                        letterSpacing: "0px",
+                        textTransform: "uppercase",
+                        margin: 0,
+                        lineHeight: 1,
+                      }}
+                    >
+                      Mark Attendance
+                    </h2>
+                  </div>
+                </div>
                 <span
                   style={{
                     color: ADMIN_THEME.subtle,
@@ -363,8 +396,57 @@ export function AdminAttendancePage({
               </div>
             </div>
 
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "18px", flexWrap: "wrap" }}>
-              <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                <div
+                  style={{
+                    height: "46px",
+                    borderRadius: "999px",
+                    border: `1px solid ${ADMIN_THEME.inputBorder}`,
+                    backgroundColor: ADMIN_THEME.inputBg,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    padding: "0 14px",
+                    minWidth: "190px",
+                  }}
+                >
+                  <Search size={15} color={ADMIN_THEME.subtle} />
+                  <input
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="Search student..."
+                    style={{
+                      flex: 1,
+                      background: "transparent",
+                      border: "none",
+                      outline: "none",
+                      color: ADMIN_THEME.heading,
+                      fontSize: "13px",
+                      fontFamily: "var(--font-body)",
+                    }}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter("all")}
+                  style={{
+                    height: "46px",
+                    padding: "0 13px",
+                    borderRadius: "999px",
+                    fontSize: "11px",
+                    fontFamily: "var(--font-body)",
+                    letterSpacing: "0px",
+                    textTransform: "uppercase",
+                    cursor: "pointer",
+                    backgroundColor: statusFilter === "all" ? ADMIN_THEME.surfaceSoft : ADMIN_THEME.inputBg,
+                    border: `1px solid ${statusFilter === "all" ? ADMIN_THEME.border : ADMIN_THEME.inputBorder}`,
+                    color: statusFilter === "all" ? ADMIN_THEME.heading : ADMIN_THEME.subtle,
+                    fontWeight: statusFilter === "all" ? 800 : 600,
+                  }}
+                >
+                  All {attendanceCounts.present + attendanceCounts.late + attendanceCounts.absent + attendanceCounts.pending}
+                </button>
                 {([
                   { id: "present", label: "Present", count: attendanceCounts.present },
                   { id: "late", label: "Late", count: attendanceCounts.late },
@@ -412,13 +494,32 @@ export function AdminAttendancePage({
                   style={{
                     minHeight: "48px",
                     borderRadius: "14px",
-                    border: `1px solid ${ADMIN_THEME.inputBorder}`,
-                    backgroundColor: ADMIN_THEME.inputBg,
-                    padding: "0 16px",
-                    display: "flex",
-                    alignItems: "center",
+                    border: `1px solid ${ADMIN_THEME.accentBorder}`,
+                    background: "linear-gradient(180deg, rgba(200,52,46,0.10) 0%, rgba(255,255,255,0.96) 100%)",
+                    boxShadow: "0 12px 24px rgba(200,52,46,0.10), inset 0 1px 0 rgba(255,255,255,0.76)",
+                    position: "relative",
                   }}
                 >
+                  <span
+                    style={{
+                      position: "absolute",
+                      left: "10px",
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      padding: "4px 8px",
+                      borderRadius: "999px",
+                      border: `1px solid ${ADMIN_THEME.accentBorder}`,
+                      backgroundColor: ADMIN_THEME.accentBg,
+                      color: ADMIN_THEME.accent,
+                      fontSize: "9px",
+                      fontWeight: 800,
+                      textTransform: "uppercase",
+                      pointerEvents: "none",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Cohort
+                  </span>
                   <select
                     value={selectedCohortId}
                     onChange={(event) => {
@@ -428,13 +529,18 @@ export function AdminAttendancePage({
                     }}
                     style={{
                       width: "100%",
-                      height: "46px",
+                      height: "48px",
+                      padding: "0 40px 0 84px",
+                      borderRadius: "14px",
                       background: "transparent",
                       border: "none",
                       outline: "none",
                       color: ADMIN_THEME.heading,
-                      fontSize: "14px",
+                      fontSize: "13px",
                       fontFamily: "var(--font-body)",
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      appearance: "none",
                     }}
                   >
                     {cohorts.map((cohort) => (
@@ -443,6 +549,19 @@ export function AdminAttendancePage({
                       </option>
                     ))}
                   </select>
+                  <span
+                    style={{
+                      position: "absolute",
+                      right: "12px",
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      color: ADMIN_THEME.accent,
+                      pointerEvents: "none",
+                      display: "inline-flex",
+                    }}
+                  >
+                    <ChevronDown size={16} />
+                  </span>
                 </div>
               ) : (
                 <div
@@ -511,41 +630,6 @@ export function AdminAttendancePage({
                   })}
                 </select>
               </div>
-            </div>
-
-            <p style={{ color: ADMIN_THEME.subtle, fontSize: "12px", lineHeight: 1.6, margin: "0 0 -4px 0" }}>
-              {allowCohortSwitch
-                ? "Switch cohorts and jump between upcoming or previous sessions here to review or adjust a specific attendance register."
-                : "Jump between upcoming or previous sessions in this cohort to review or adjust the attendance register."}
-            </p>
-
-            <div
-              style={{
-                height: "48px",
-                borderRadius: "14px",
-                border: `1px solid ${ADMIN_THEME.inputBorder}`,
-                backgroundColor: ADMIN_THEME.inputBg,
-                display: "flex",
-                alignItems: "center",
-                gap: "12px",
-                padding: "0 16px",
-              }}
-            >
-              <Search size={18} color={ADMIN_THEME.subtle} />
-              <input
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Search by student name..."
-                style={{
-                  flex: 1,
-                  background: "transparent",
-                  border: "none",
-                  outline: "none",
-                  color: ADMIN_THEME.heading,
-                  fontSize: "14px",
-                  fontFamily: "var(--font-body)",
-                }}
-              />
             </div>
 
             <div
@@ -671,40 +755,6 @@ export function AdminAttendancePage({
               </div>
             </div>
 
-            <div
-              style={{
-                minHeight: "152px",
-                borderRadius: "14px",
-                border: `1px solid ${ADMIN_THEME.accentBorder}`,
-                background: ATTENDANCE_THEME.tipSurface,
-                padding: "17px 21px",
-                display: "grid",
-                gap: "8px",
-              }}
-            >
-              <p
-                style={{
-                  color: ADMIN_THEME.accent,
-                  fontSize: "11px",
-                  fontWeight: 700,
-                  letterSpacing: "0px",
-                  textTransform: "uppercase",
-                  margin: 0,
-                }}
-              >
-                Quick Tips
-              </p>
-              {[
-                "Click status buttons to mark attendance instantly",
-                "Use search to quickly find specific students",
-                "Click stat badges to filter by attendance status",
-                "Use bulk actions to mark all students at once",
-              ].map((tip) => (
-                <p key={tip} style={{ color: ADMIN_THEME.muted, fontSize: "13px", lineHeight: 1.5, margin: 0 }}>
-                  • {tip}
-                </p>
-              ))}
-            </div>
           </div>
         </div>
       </div>

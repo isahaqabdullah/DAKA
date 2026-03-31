@@ -1,20 +1,14 @@
-import { useMemo, useState, type CSSProperties, type FormEvent } from "react";
-import {
-  ArrowRight,
-  CalendarDays,
-  FileText,
-  GraduationCap,
-  Megaphone,
-  Users,
-} from "lucide-react";
+import { type CSSProperties } from "react";
+import { Megaphone } from "lucide-react";
 import {
   ActionButton,
   ADMIN_THEME,
-  MetricCard,
+  CohortSwitcher,
   SectionTitle,
   Surface,
   formatDateTime,
   loadCohorts,
+  type AnnouncementEntry,
   type Cohort,
 } from "./AdminDashboard";
 
@@ -26,6 +20,21 @@ const nestedCardStyle: CSSProperties = {
 
 function sessionStamp(session: Cohort["classes"][number]) {
   return new Date(`${session.date}T${session.time}:00`).getTime();
+}
+
+function formatSessionDate(date: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(new Date(`${date}T00:00:00`));
+}
+
+function formatSessionTime(time: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(`2026-01-01T${time}:00`));
 }
 
 function getSortedSessions(cohorts: Cohort[]) {
@@ -48,480 +57,315 @@ function getPrioritySession(classes: Cohort["classes"]) {
   return ordered.find((session) => sessionStamp(session) >= now) ?? ordered[ordered.length - 1];
 }
 
-export function AdminLandingPage({
-  onOpenCohort,
-  onOpenAttendance,
-  onOpenCohortCreate,
-}: {
-  onOpenCohort: (cohortId: string) => void;
-  onOpenAttendance: (context: { cohortId: string; classId: string }) => void;
-  onOpenCohortCreate?: () => void;
-}) {
-  const [cohorts] = useState<Cohort[]>(() => loadCohorts());
-  const [announcementDraft, setAnnouncementDraft] = useState("");
-  const [sessionCohortFilter, setSessionCohortFilter] = useState<string>("all");
-  const [sessionWindow, setSessionWindow] = useState<"upcoming" | "previous">("upcoming");
+function countActiveStudents(cohort: Cohort) {
+  return cohort.students.filter((student) => (student.status ?? "active") === "active").length;
+}
 
-  const allSessions = getSortedSessions(cohorts);
-  const nextSession = allSessions.find((session) => sessionStamp(session) >= Date.now()) ?? allSessions[0];
-  const totalStudents = cohorts.reduce((count, cohort) => count + cohort.students.length, 0);
-  const totalCapacity = cohorts.reduce((count, cohort) => count + cohort.capacity, 0);
-  const totalReports = cohorts.reduce((count, cohort) => count + cohort.reports.length, 0);
-  const visibleSessions = useMemo(() => {
-    const now = Date.now();
+function countPendingAttendance(cohort: Cohort, classId: string) {
+  return cohort.students.filter(
+    (student) =>
+      (student.status ?? "active") === "active" && (student.attendance[classId] ?? "pending") === "pending",
+  ).length;
+}
 
-    return allSessions
-      .filter((session) => (sessionCohortFilter === "all" ? true : session.cohortId === sessionCohortFilter))
-      .filter((session) => (sessionWindow === "upcoming" ? sessionStamp(session) >= now : sessionStamp(session) < now))
-      .sort((left, right) =>
-        sessionWindow === "upcoming"
-          ? sessionStamp(left) - sessionStamp(right)
-          : sessionStamp(right) - sessionStamp(left),
-      );
-  }, [allSessions, sessionCohortFilter, sessionWindow]);
-
-  function handleAnnouncementSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!announcementDraft.trim()) {
-      return;
-    }
-
-    setAnnouncementDraft("");
+function announcementScopeLabel(announcement: AnnouncementEntry, cohort: Cohort) {
+  if (!announcement.classId) {
+    return "Whole cohort";
   }
+
+  const targetClass = cohort.classes.find((session) => session.id === announcement.classId);
+
+  if (!targetClass) {
+    return "Archived session target";
+  }
+
+  return `${formatDateTime(targetClass.date, targetClass.time)} · ${targetClass.topic}`;
+}
+
+interface AdminLandingPageProps {
+  focusedCohortId?: string;
+  onSelectCohort?: (cohortId: string) => void;
+  onOpenAttendance: (context: { cohortId: string; classId?: string }) => void;
+  onComposeAnnouncement?: () => void;
+}
+
+export function AdminLandingPage({
+  focusedCohortId,
+  onSelectCohort,
+  onOpenAttendance,
+  onComposeAnnouncement,
+}: AdminLandingPageProps) {
+  const cohorts = loadCohorts();
+  const activeCohorts = cohorts.filter((cohort) => !cohort.archived);
+  const focusedCohort = activeCohorts.find((cohort) => cohort.id === focusedCohortId) ?? activeCohorts[0];
+  const allSessions = getSortedSessions(activeCohorts);
+  const now = Date.now();
+  const upcomingSessions = allSessions.filter((session) => sessionStamp(session) >= now).slice(0, 6);
+  const focusSession = focusedCohort ? getPrioritySession(focusedCohort.classes) : undefined;
+  const focusAttendanceExceptions = focusedCohort
+    ? focusedCohort.classes.filter(
+        (session) => sessionStamp(session) < now && countPendingAttendance(focusedCohort, session.id) > 0,
+      ).length
+    : 0;
+  const recentAnnouncements = activeCohorts
+    .flatMap((cohort) =>
+      cohort.announcements.map((announcement) => ({
+        ...announcement,
+        cohortId: cohort.id,
+        cohortName: cohort.name,
+        scopeLabel: announcementScopeLabel(announcement, cohort),
+      })),
+    )
+    .sort((left, right) => {
+      if ((left.pinned ?? false) !== (right.pinned ?? false)) {
+        return left.pinned ? -1 : 1;
+      }
+
+      return right.createdAt.localeCompare(left.createdAt);
+    })
+    .slice(0, 6);
 
   return (
     <>
       <style>{`
-        .landing-grid {
+        .landing-stack {
           display: grid;
-          grid-template-columns: minmax(0, 1.4fr) minmax(320px, 380px);
-          gap: 22px;
-        }
-        .landing-metrics {
-          display: grid;
-          grid-template-columns: repeat(4, minmax(0, 1fr));
-          gap: 16px;
-        }
-        .landing-cohort-grid {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 16px;
-        }
-        .landing-rail {
-          display: grid;
-          gap: 18px;
-        }
-        .session-access-controls {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) auto;
           gap: 12px;
         }
-        @media (max-width: 1120px) {
-          .landing-grid,
-          .landing-metrics,
-          .landing-cohort-grid {
-            grid-template-columns: 1fr;
-          }
-          .session-access-controls {
+        .landing-focus-strip {
+          display: flex;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+        .landing-session-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+          gap: 8px;
+        }
+        .landing-announcement-layout {
+          display: grid;
+          grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+          gap: 10px;
+          align-items: start;
+        }
+        .landing-announcement-list {
+          display: grid;
+          gap: 8px;
+        }
+        @media (max-width: 900px) {
+          .landing-announcement-layout {
             grid-template-columns: 1fr;
           }
         }
       `}</style>
 
-      <div style={{ display: "grid", gap: "22px" }}>
-        <Surface
-          accent
-          style={{
-            padding: "28px",
-            background:
-              "radial-gradient(circle at top right, rgba(200,52,46,0.18), transparent 30%), linear-gradient(135deg, #FFFFFF 0%, #F8F4EF 100%)",
-          }}
-        >
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              background:
-                "repeating-linear-gradient(120deg, transparent 0, transparent 18px, rgba(200,52,46,0.025) 18px, rgba(200,52,46,0.025) 20px)",
-              pointerEvents: "none",
-            }}
-          />
-
-          <SectionTitle eyebrow="Admin Landing" title="Choose A Cohort" detail="Open a cohort desk to run daily operations" />
-
-          <div style={{ display: "flex", justifyContent: "space-between", gap: "18px", flexWrap: "wrap", position: "relative" }}>
-            <div style={{ maxWidth: "760px" }}>
-              <p style={{ color: ADMIN_THEME.muted, fontSize: "16px", lineHeight: 1.7, margin: "0 0 18px 0" }}>
-                Start from the cohort list, scan seat fill and the upcoming session queue, then enter the desk you need for attendance, scheduling, reporting, and roster updates.
-              </p>
-              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                <span style={{ padding: "8px 12px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.accentBorder}`, backgroundColor: ADMIN_THEME.accentBg, color: ADMIN_THEME.accent, fontSize: "12px", letterSpacing: "0px", textTransform: "uppercase" }}>
-                  Cohort roster
-                </span>
-                <span style={{ padding: "8px 12px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.border}`, backgroundColor: ADMIN_THEME.surfaceSoft, color: ADMIN_THEME.muted, fontSize: "12px", letterSpacing: "0px", textTransform: "uppercase" }}>
-                  Session radar
-                </span>
-                <span style={{ padding: "8px 12px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.border}`, backgroundColor: ADMIN_THEME.surfaceSoft, color: ADMIN_THEME.muted, fontSize: "12px", letterSpacing: "0px", textTransform: "uppercase" }}>
-                  Parent updates
-                </span>
-              </div>
-            </div>
-
-            <div
-              style={{
-                minWidth: "280px",
-                padding: "18px",
-                borderRadius: "18px",
-                border: `1px solid ${ADMIN_THEME.border}`,
-                background: "linear-gradient(180deg, #FFFFFF 0%, #F7F2ED 100%)",
-                boxShadow: "0 12px 30px rgba(70,46,25,0.08)",
-              }}
-            >
-              <p style={{ color: ADMIN_THEME.subtle, fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 10px 0" }}>
-                Next Operational Pulse
-              </p>
-              <h3 style={{ color: ADMIN_THEME.heading, fontSize: "26px", fontFamily: "var(--font-heading)", margin: "0 0 8px 0", lineHeight: 1 }}>
-                {nextSession ? nextSession.cohortName.toUpperCase() : "NO SESSION"}
-              </h3>
-              <p style={{ color: ADMIN_THEME.muted, fontSize: "14px", margin: "0 0 10px 0" }}>
-                {nextSession ? `${nextSession.program} · ${nextSession.track}` : "Schedule the next class to populate the queue."}
-              </p>
-              <p style={{ color: ADMIN_THEME.subtle, fontSize: "13px", lineHeight: 1.6, margin: 0 }}>
-                {nextSession ? `${formatDateTime(nextSession.date, nextSession.time)} · ${nextSession.topic}` : "No upcoming classes currently listed."}
-              </p>
-            </div>
-          </div>
-        </Surface>
-
-        <div className="landing-metrics">
-          <MetricCard icon={<Users size={20} />} label="Active Cohorts" value={String(cohorts.length)} note="Running groups visible from the landing deck" />
-          <MetricCard icon={<GraduationCap size={20} />} label="Seat Fill" value={`${totalStudents}/${totalCapacity}`} note="Students enrolled across all cohorts" />
-          <MetricCard icon={<CalendarDays size={20} />} label="Scheduled Sessions" value={String(allSessions.length)} note={nextSession ? `Next up: ${nextSession.cohortName}` : "Add a class to start the queue"} />
-          <MetricCard icon={<FileText size={20} />} label="Reports Logged" value={String(totalReports)} note="Stored coaching notes across the academy" />
-        </div>
-
-        <div className="landing-grid">
-          <Surface style={{ padding: "23px", alignSelf: "start" }}>
-            <SectionTitle eyebrow="Cohorts" title="Open A Cohort Desk" detail={`${cohorts.length} active groups`} />
-
-            <div className="landing-cohort-grid">
-              {cohorts.map((cohort) => {
-                const nextCohortSession = getPrioritySession(cohort.classes);
-                const completedSyllabus = cohort.syllabus.filter((item) => item.status === "complete").length;
-                const liveModules = cohort.syllabus.filter((item) => item.status === "live").length;
-
-                return (
-                  <button
-                    key={cohort.id}
-                    type="button"
-                    onClick={() => onOpenCohort(cohort.id)}
-                    style={{
-                      width: "100%",
-                      textAlign: "left",
-                      padding: "19px",
-                      borderRadius: "20px",
-                      border: `1px solid ${ADMIN_THEME.borderSoft}`,
-                      background: "linear-gradient(180deg, #FFFFFF 0%, #F9F5F0 100%)",
-                      boxShadow: "0 16px 34px rgba(70,46,25,0.08)",
-                      cursor: "pointer",
-                    }}
-                  >
-                    <div style={{ display: "grid", gap: "16px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start" }}>
-                        <div>
-                          <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 6px 0" }}>
-                            {cohort.program}
-                          </p>
-                          <h3 style={{ color: ADMIN_THEME.heading, fontSize: "24px", fontFamily: "var(--font-heading)", margin: "0 0 8px 0", lineHeight: 1 }}>
-                            {cohort.name.toUpperCase()}
-                          </h3>
-                          <p style={{ color: ADMIN_THEME.muted, fontSize: "13px", lineHeight: 1.6, margin: 0 }}>
-                            {cohort.cadence} · Coach {cohort.coach}
-                          </p>
-                        </div>
-                        <span
-                          style={{
-                            padding: "7px 10px",
-                            borderRadius: "999px",
-                            backgroundColor: ADMIN_THEME.accentBg,
-                            border: `1px solid ${ADMIN_THEME.accentBorder}`,
-                            color: ADMIN_THEME.accent,
-                            fontSize: "11px",
-                            letterSpacing: "0px",
-                            textTransform: "uppercase",
-                            flexShrink: 0,
-                          }}
-                        >
-                          {cohort.students.length}/{cohort.capacity}
-                        </span>
-                      </div>
-
-                      <div style={{ display: "grid", gap: "10px" }}>
-                        <div style={{ padding: "14px 15px", borderRadius: "16px", ...nestedCardStyle }}>
-                          <p style={{ color: ADMIN_THEME.subtle, fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 6px 0" }}>
-                            Next Session
-                          </p>
-                          <p style={{ color: ADMIN_THEME.heading, fontSize: "14px", fontWeight: 700, margin: "0 0 4px 0" }}>
-                            {nextCohortSession ? formatDateTime(nextCohortSession.date, nextCohortSession.time) : "No class scheduled"}
-                          </p>
-                          <p style={{ color: ADMIN_THEME.muted, fontSize: "13px", margin: 0 }}>
-                            {nextCohortSession ? `${nextCohortSession.track} · ${nextCohortSession.topic}` : cohort.room}
-                          </p>
-                        </div>
-
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "10px" }}>
-                          <div style={{ padding: "12px 13px", borderRadius: "14px", ...nestedCardStyle }}>
-                            <p style={{ color: ADMIN_THEME.subtle, fontSize: "9px", letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 6px 0" }}>Room</p>
-                            <p style={{ color: ADMIN_THEME.heading, fontSize: "13px", fontWeight: 700, margin: 0 }}>{cohort.room}</p>
-                          </div>
-                          <div style={{ padding: "12px 13px", borderRadius: "14px", ...nestedCardStyle }}>
-                            <p style={{ color: ADMIN_THEME.subtle, fontSize: "9px", letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 6px 0" }}>Syllabus</p>
-                            <p style={{ color: ADMIN_THEME.heading, fontSize: "13px", fontWeight: 700, margin: 0 }}>{completedSyllabus}/{cohort.syllabus.length}</p>
-                          </div>
-                          <div style={{ padding: "12px 13px", borderRadius: "14px", ...nestedCardStyle }}>
-                            <p style={{ color: ADMIN_THEME.subtle, fontSize: "9px", letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 6px 0" }}>Updates</p>
-                            <p style={{ color: ADMIN_THEME.heading, fontSize: "13px", fontWeight: 700, margin: 0 }}>{cohort.announcements.length}</p>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
-                        <span style={{ color: liveModules > 0 ? ADMIN_THEME.accent : ADMIN_THEME.subtle, fontSize: "12px", letterSpacing: "0px", textTransform: "uppercase" }}>
-                          {liveModules > 0 ? `${liveModules} live modules in progress` : "No live modules flagged"}
-                        </span>
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: "8px", color: ADMIN_THEME.heading, fontSize: "13px", fontWeight: 800, letterSpacing: "0px", textTransform: "uppercase" }}>
-                          Open Dashboard <ArrowRight size={16} />
-                        </span>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </Surface>
-
-          <div className="landing-rail">
-            <Surface style={{ padding: "23px", alignSelf: "start" }}>
-              <SectionTitle eyebrow="Cohort Setup" title="Create + Manage Cohorts" />
-
-              <div style={{ display: "grid", gap: "14px" }}>
-                <p style={{ color: ADMIN_THEME.muted, fontSize: "13px", lineHeight: 1.65, margin: 0 }}>
-                  Open the dedicated setup page to create new cohort desks or manage existing ones before moving into students, sessions, and syllabus workspaces.
-                </p>
-
-                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                  <span
-                    style={{
-                      padding: "7px 10px",
-                      borderRadius: "999px",
-                      backgroundColor: ADMIN_THEME.accentBg,
-                      border: `1px solid ${ADMIN_THEME.accentBorder}`,
-                      color: ADMIN_THEME.accent,
-                      fontSize: "10px",
-                      letterSpacing: "0px",
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    New desk creation
-                  </span>
-                  <span
-                    style={{
-                      padding: "7px 10px",
-                      borderRadius: "999px",
-                      backgroundColor: ADMIN_THEME.surfaceSoft,
-                      border: `1px solid ${ADMIN_THEME.borderSoft}`,
-                      color: ADMIN_THEME.muted,
-                      fontSize: "10px",
-                      letterSpacing: "0px",
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    Existing desk management
-                  </span>
-                </div>
-
-                <ActionButton onClick={onOpenCohortCreate} style={{ justifySelf: "start", minWidth: "188px" }}>
-                  Open Cohort Setup
-                </ActionButton>
-              </div>
-            </Surface>
-
-            <Surface style={{ padding: "23px", alignSelf: "start" }}>
-              <form onSubmit={handleAnnouncementSubmit} style={{ display: "grid", gap: "18px" }}>
-                <SectionTitle eyebrow="Announcements" title="Send Academy-wide Update" />
-
-                <div
-                  style={{
-                    minHeight: "52px",
-                    borderRadius: "14px",
-                    border: `1px solid ${ADMIN_THEME.inputBorder}`,
-                    backgroundColor: ADMIN_THEME.inputBg,
-                    padding: "0 16px",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "12px",
-                  }}
-                >
-                  <Megaphone size={18} color={ADMIN_THEME.subtle} />
-                  <input
-                    value={announcementDraft}
-                    onChange={(event) => setAnnouncementDraft(event.target.value)}
-                    placeholder="Share an academy-wide parent reminder, timing update, or coach note"
-                    style={{
-                      width: "100%",
-                      height: "46px",
-                      background: "transparent",
-                      border: "none",
-                      outline: "none",
-                      color: ADMIN_THEME.heading,
-                      fontSize: "14px",
-                      fontFamily: "var(--font-body)",
-                    }}
-                  />
-                </div>
-
-                <p style={{ color: ADMIN_THEME.subtle, fontSize: "12px", lineHeight: 1.6, margin: 0 }}>
-                  Landing keeps academy-wide communication separate, while each cohort dashboard now holds its own class-targeted announcement workflow.
-                </p>
-
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                  <ActionButton type="submit" style={{ minWidth: "184px" }}>Send Announcement</ActionButton>
-                </div>
-              </form>
-            </Surface>
-
-            <Surface style={{ padding: "23px", alignSelf: "start" }}>
+      <div className="landing-stack">
+        <Surface style={{ padding: "14px" }}>
+          <div style={{ display: "grid", gap: "10px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", flexWrap: "wrap", alignItems: "flex-start" }}>
               <SectionTitle
-                eyebrow="Attendance Access"
-                title="Manage Sessions"
-                detail={sessionWindow === "upcoming" ? `${visibleSessions.length} upcoming` : `${visibleSessions.length} previous`}
+                eyebrow="Attendance"
+                title="Manage Attendance By Session"
+                detail={
+                  upcomingSessions.length > 0
+                    ? `${upcomingSessions.length} upcoming sessions`
+                    : "No upcoming sessions"
+                }
               />
+              {focusedCohort ? (
+                <CohortSwitcher cohorts={activeCohorts} selectedCohortId={focusedCohort.id} onSelect={(cohortId) => onSelectCohort?.(cohortId)} />
+              ) : null}
+            </div>
 
-              <div className="session-access-controls" style={{ marginBottom: "14px" }}>
-                <div
+            {focusedCohort ? (
+              <div className="landing-focus-strip">
+                <span style={{ padding: "5px 8px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.accentBorder}`, backgroundColor: ADMIN_THEME.accentBg, color: ADMIN_THEME.accent, fontSize: "10px", textTransform: "uppercase" }}>
+                  Focused {focusedCohort.name}
+                </span>
+                <span style={{ padding: "5px 8px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.border}`, backgroundColor: ADMIN_THEME.surface, color: ADMIN_THEME.muted, fontSize: "10px", textTransform: "uppercase" }}>
+                  {countActiveStudents(focusedCohort)}/{focusedCohort.capacity} seats
+                </span>
+                <span
                   style={{
-                    minHeight: "48px",
-                    borderRadius: "14px",
-                    border: `1px solid ${ADMIN_THEME.inputBorder}`,
-                    backgroundColor: ADMIN_THEME.inputBg,
-                    padding: "0 14px",
-                    display: "flex",
-                    alignItems: "center",
+                    display: "grid",
+                    gap: "2px",
+                    padding: "6px 10px",
+                    borderRadius: "12px",
+                    border: `1px solid ${ADMIN_THEME.accentBorder}`,
+                    backgroundColor: ADMIN_THEME.accentBg,
+                    color: ADMIN_THEME.heading,
+                    minWidth: "132px",
                   }}
                 >
-                  <select
-                    value={sessionCohortFilter}
-                    onChange={(event) => setSessionCohortFilter(event.target.value)}
-                    style={{
-                      width: "100%",
-                      height: "46px",
-                      background: "transparent",
-                      border: "none",
-                      outline: "none",
-                      color: ADMIN_THEME.heading,
-                      fontSize: "14px",
-                      fontFamily: "var(--font-body)",
-                    }}
-                  >
-                    <option value="all">All Cohorts</option>
-                    {cohorts.map((cohort) => (
-                      <option key={cohort.id} value={cohort.id}>
-                        {cohort.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                  <ActionButton
-                    secondary={sessionWindow !== "upcoming"}
-                    onClick={() => setSessionWindow("upcoming")}
-                    style={{ minWidth: "144px" }}
-                  >
-                    Upcoming
-                  </ActionButton>
-                  <ActionButton
-                    secondary={sessionWindow !== "previous"}
-                    onClick={() => setSessionWindow("previous")}
-                    style={{ minWidth: "144px" }}
-                  >
-                    Previous
-                  </ActionButton>
-                </div>
+                  <span style={{ color: ADMIN_THEME.subtle, fontSize: "9px", textTransform: "uppercase", lineHeight: 1 }}>
+                    {focusSession ? formatSessionDate(focusSession.date) : "Next Session"}
+                  </span>
+                  <span style={{ color: ADMIN_THEME.accent, fontSize: "14px", fontWeight: 900, lineHeight: 1.05 }}>
+                    {focusSession ? formatSessionTime(focusSession.time) : "No session"}
+                  </span>
+                </span>
+                <span style={{ padding: "5px 8px", borderRadius: "999px", border: `1px solid ${focusAttendanceExceptions > 0 ? ADMIN_THEME.accentBorder : ADMIN_THEME.border}`, backgroundColor: focusAttendanceExceptions > 0 ? ADMIN_THEME.accentBg : ADMIN_THEME.surface, color: focusAttendanceExceptions > 0 ? ADMIN_THEME.accent : ADMIN_THEME.muted, fontSize: "10px", textTransform: "uppercase" }}>
+                  {focusAttendanceExceptions > 0 ? `${focusAttendanceExceptions} pending past sessions` : "attendance clear"}
+                </span>
               </div>
+            ) : null}
 
-              <div style={{ display: "grid", gap: "12px", maxHeight: "560px", overflowY: "auto", paddingRight: "4px" }}>
-                {visibleSessions.length === 0 ? (
-                  <div
-                    style={{
-                      padding: "18px",
-                      borderRadius: "16px",
-                      border: `1px dashed ${ADMIN_THEME.border}`,
-                      backgroundColor: ADMIN_THEME.surfaceSoft,
-                      color: ADMIN_THEME.subtle,
-                      fontSize: "14px",
-                    }}
-                  >
-                    No sessions match the current cohort filter and time window.
-                  </div>
-                ) : (
-                  visibleSessions.map((session) => (
+            {upcomingSessions.length === 0 ? (
+              <p style={{ color: ADMIN_THEME.muted, fontSize: "13px", lineHeight: 1.5, margin: 0 }}>
+                No upcoming sessions are scheduled. Use schedule session to build the next class.
+              </p>
+            ) : (
+              <div className="landing-session-grid">
+                {upcomingSessions.map((session) => {
+                  const cohort = activeCohorts.find((item) => item.id === session.cohortId);
+                  const pendingAttendance = cohort ? countPendingAttendance(cohort, session.id) : 0;
+
+                  return (
                     <div
                       key={session.id}
                       style={{
-                        padding: "15px 16px",
-                        borderRadius: "16px",
-                        ...nestedCardStyle,
+                        padding: "10px 12px",
+                        borderRadius: "14px",
+                        border: `1px solid ${ADMIN_THEME.border}`,
+                        backgroundColor: ADMIN_THEME.surface,
+                        display: "grid",
+                        gap: "8px",
                       }}
                     >
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start", marginBottom: "10px" }}>
-                        <div>
-                          <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 6px 0" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", alignItems: "flex-start" }}>
+                        <div style={{ display: "grid", gap: "3px", minWidth: 0 }}>
+                          <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", textTransform: "uppercase", margin: 0 }}>
                             {session.cohortName}
                           </p>
-                          <h4 style={{ color: ADMIN_THEME.heading, fontSize: "16px", fontWeight: 800, margin: "0 0 6px 0" }}>
+                          <h3 style={{ color: ADMIN_THEME.heading, fontSize: "15px", fontWeight: 800, margin: 0, lineHeight: 1.2 }}>
                             {session.topic}
-                          </h4>
+                          </h3>
                         </div>
-                        <span
-                          style={{
-                            padding: "7px 10px",
-                            borderRadius: "999px",
-                            backgroundColor: sessionWindow === "upcoming" ? ADMIN_THEME.accentBg : ADMIN_THEME.surfaceTint,
-                            border: `1px solid ${sessionWindow === "upcoming" ? ADMIN_THEME.accentBorder : ADMIN_THEME.border}`,
-                            color: sessionWindow === "upcoming" ? ADMIN_THEME.accent : ADMIN_THEME.muted,
-                            fontSize: "10px",
-                            letterSpacing: "0px",
-                            textTransform: "uppercase",
-                            flexShrink: 0,
-                          }}
-                        >
-                          {sessionWindow}
+                        <span style={{ padding: "4px 7px", borderRadius: "999px", border: `1px solid ${pendingAttendance > 0 ? ADMIN_THEME.accentBorder : ADMIN_THEME.border}`, backgroundColor: pendingAttendance > 0 ? ADMIN_THEME.accentBg : ADMIN_THEME.surfaceSoft, color: pendingAttendance > 0 ? ADMIN_THEME.accent : ADMIN_THEME.muted, fontSize: "9px", textTransform: "uppercase", whiteSpace: "nowrap" }}>
+                          {pendingAttendance > 0 ? `${pendingAttendance} pending` : "ready"}
                         </span>
                       </div>
-                      <p style={{ color: ADMIN_THEME.muted, fontSize: "13px", lineHeight: 1.6, margin: "0 0 12px 0" }}>
-                        {formatDateTime(session.date, session.time)} · {session.track}
-                      </p>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
-                        <span style={{ color: ADMIN_THEME.subtle, fontSize: "12px", lineHeight: 1.5 }}>
+
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+                        <div
+                          style={{
+                            display: "grid",
+                            gap: "2px",
+                            padding: "7px 10px",
+                            borderRadius: "12px",
+                            border: `1px solid ${ADMIN_THEME.accentBorder}`,
+                            backgroundColor: ADMIN_THEME.accentBg,
+                            minWidth: "116px",
+                          }}
+                        >
+                          <span style={{ color: ADMIN_THEME.subtle, fontSize: "9px", textTransform: "uppercase", lineHeight: 1 }}>
+                            {formatSessionDate(session.date)}
+                          </span>
+                          <span style={{ color: ADMIN_THEME.accent, fontSize: "16px", fontWeight: 900, lineHeight: 1.05 }}>
+                            {formatSessionTime(session.time)}
+                          </span>
+                        </div>
+                        <p style={{ color: ADMIN_THEME.muted, fontSize: "11px", lineHeight: 1.45, margin: 0 }}>
+                          {session.track} · Coach {session.coach}
+                        </p>
+                      </div>
+
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                        <span style={{ color: ADMIN_THEME.subtle, fontSize: "10px", textTransform: "uppercase" }}>
                           {session.program}
                         </span>
                         <ActionButton
-                          secondary
                           onClick={() => onOpenAttendance({ cohortId: session.cohortId, classId: session.id })}
-                          style={{ minWidth: "166px" }}
+                          style={{ minWidth: "132px" }}
                         >
                           Open Attendance
                         </ActionButton>
                       </div>
                     </div>
-                  ))
-                )}
+                  );
+                })}
               </div>
-            </Surface>
+            )}
           </div>
-        </div>
+        </Surface>
+
+        <Surface style={{ padding: "14px" }}>
+          <div style={{ display: "grid", gap: "10px" }}>
+            <SectionTitle
+              eyebrow="Announcements"
+              title="Announcements"
+              detail={`${recentAnnouncements.length} recent updates`}
+            />
+
+            <div className="landing-announcement-layout">
+              <div style={{ padding: "12px", borderRadius: "14px", ...nestedCardStyle, display: "grid", gap: "8px" }}>
+                {onComposeAnnouncement ? (
+                  <ActionButton onClick={onComposeAnnouncement} style={{ minWidth: "170px", justifySelf: "start" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                      <Megaphone size={15} /> Compose
+                    </span>
+                  </ActionButton>
+                ) : null}
+              </div>
+
+              {recentAnnouncements.length === 0 ? (
+                <div style={{ padding: "12px", borderRadius: "14px", ...nestedCardStyle }}>
+                  <p style={{ color: ADMIN_THEME.subtle, fontSize: "12px", lineHeight: 1.5, margin: 0 }}>
+                    No announcements have been sent yet.
+                  </p>
+                </div>
+              ) : (
+                <div className="landing-announcement-list">
+                  {recentAnnouncements.map((announcement) => {
+                    const isExpired = announcement.expiresAt ? new Date(announcement.expiresAt) < new Date() : false;
+
+                    return (
+                      <div
+                        key={announcement.id}
+                        style={{
+                          padding: "10px 12px",
+                          borderRadius: "14px",
+                          border: `1px solid ${announcement.pinned ? ADMIN_THEME.accentBorder : ADMIN_THEME.border}`,
+                          backgroundColor: ADMIN_THEME.surface,
+                          opacity: isExpired ? 0.6 : 1,
+                          display: "grid",
+                          gap: "5px",
+                        }}
+                      >
+                        <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", alignItems: "center" }}>
+                          <span style={{ color: ADMIN_THEME.accent, fontSize: "10px", textTransform: "uppercase" }}>
+                            {announcement.cohortName}
+                          </span>
+                          <span style={{ color: ADMIN_THEME.subtle, fontSize: "10px", textTransform: "uppercase" }}>
+                            {announcement.scopeLabel}
+                          </span>
+                          {announcement.pinned ? (
+                            <span style={{ color: ADMIN_THEME.accent, fontSize: "9px", fontWeight: 800, textTransform: "uppercase" }}>
+                              Pinned
+                            </span>
+                          ) : null}
+                          {isExpired ? (
+                            <span style={{ color: ADMIN_THEME.subtle, fontSize: "9px", fontWeight: 800, textTransform: "uppercase" }}>
+                              Expired
+                            </span>
+                          ) : null}
+                        </div>
+
+                        <h4 style={{ color: ADMIN_THEME.heading, fontSize: "14px", fontWeight: 800, margin: 0 }}>
+                          {announcement.title}
+                        </h4>
+
+                        <p style={{ color: ADMIN_THEME.muted, fontSize: "12px", lineHeight: 1.45, margin: 0 }}>
+                          {announcement.message}
+                        </p>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </Surface>
       </div>
     </>
   );

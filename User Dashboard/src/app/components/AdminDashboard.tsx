@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   ArrowRight,
   CalendarDays,
+  ChevronDown,
   FileText,
   GraduationCap,
   Plus,
@@ -30,6 +31,7 @@ export interface StudentRecord {
   pace: StudentPace;
   notes: string;
   attendance: Record<string, AttendanceState>;
+  status?: "active" | "withdrawn";
 }
 
 export interface SyllabusItem {
@@ -46,6 +48,9 @@ export interface ReportEntry {
   title: string;
   summary: string;
   recommendation: string;
+  weekLabel?: string;
+  grade?: string;
+  remark?: string;
   createdAt: string;
 }
 
@@ -55,6 +60,8 @@ export interface AnnouncementEntry {
   message: string;
   classId?: string;
   createdAt: string;
+  pinned?: boolean;
+  expiresAt?: string;
 }
 
 export interface Cohort {
@@ -70,9 +77,11 @@ export interface Cohort {
   classes: ScheduledClass[];
   reports: ReportEntry[];
   announcements: AnnouncementEntry[];
+  archived?: boolean;
 }
 
 export const STORAGE_KEY = "daka-admin-dashboard-v1";
+export const UNASSIGNED_STUDENTS_STORAGE_KEY = "daka-admin-unassigned-students-v1";
 
 export const ADMIN_THEME = {
   surface: "#FFFFFF",
@@ -94,7 +103,7 @@ export const ADMIN_THEME = {
   inputBorder: "rgba(43,31,22,0.10)",
 } as const;
 
-const ATTENDANCE_COLORS: Record<AttendanceState, { bg: string; text: string; border: string }> = {
+export const ATTENDANCE_COLORS: Record<AttendanceState, { bg: string; text: string; border: string }> = {
   pending: { bg: "#F3EEE8", text: "#7E7063", border: "rgba(73,57,42,0.12)" },
   present: { bg: "rgba(34,197,94,0.10)", text: "#247A44", border: "rgba(34,197,94,0.22)" },
   late: { bg: "rgba(245,158,11,0.12)", text: "#9D6100", border: "rgba(245,158,11,0.22)" },
@@ -107,13 +116,13 @@ const SYLLABUS_COLORS: Record<SyllabusStatus, { bg: string; text: string; border
   complete: { bg: "rgba(34,197,94,0.10)", text: "#247A44", border: "rgba(34,197,94,0.22)" },
 };
 
-const nestedCardStyle: CSSProperties = {
+export const nestedCardStyle: CSSProperties = {
   border: `1px solid ${ADMIN_THEME.borderSoft}`,
   backgroundColor: ADMIN_THEME.surfaceSoft,
   boxShadow: "inset 0 1px 0 rgba(255,255,255,0.75)",
 };
 
-function createId(prefix: string) {
+export function createId(prefix: string) {
   return `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
@@ -137,11 +146,11 @@ export function formatDateTime(date: string, time: string) {
   return `${dayLabel} at ${timeLabel}`;
 }
 
-function getSessionTimestamp(session: ScheduledClass) {
+export function getSessionTimestamp(session: ScheduledClass) {
   return new Date(`${session.date}T${session.time}:00`).getTime();
 }
 
-function getPriorityClass(classes: ScheduledClass[]) {
+export function getPriorityClass(classes: ScheduledClass[]) {
   const ordered = [...classes].sort((left, right) => getSessionTimestamp(left) - getSessionTimestamp(right));
   const now = Date.now();
 
@@ -152,7 +161,12 @@ function normalizeCohort(cohort: Cohort): Cohort {
   return {
     ...cohort,
     announcements: Array.isArray(cohort.announcements)
-      ? [...cohort.announcements].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      ? [...cohort.announcements].sort((left, right) => {
+          if ((left.pinned ?? false) !== (right.pinned ?? false)) {
+            return left.pinned ? -1 : 1;
+          }
+          return right.createdAt.localeCompare(left.createdAt);
+        })
       : [],
   };
 }
@@ -179,6 +193,33 @@ export function loadCohorts(): Cohort[] {
   } catch {
     return createInitialCohorts();
   }
+}
+
+export function loadUnassignedStudents(): StudentRecord[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  const raw = window.localStorage.getItem(UNASSIGNED_STUDENTS_STORAGE_KEY);
+
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as StudentRecord[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveUnassignedStudents(students: StudentRecord[]) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem(UNASSIGNED_STUDENTS_STORAGE_KEY, JSON.stringify(students));
 }
 
 function createInitialCohorts(): Cohort[] {
@@ -244,6 +285,9 @@ function createInitialCohorts(): Cohort[] {
           title: "Week 1 progression report",
           summary: "Sara stayed composed in traffic and consistently hit the first apex without correction.",
           recommendation: "Push her into a faster reference group next week and add one overtaking drill.",
+          weekLabel: "Week 01",
+          grade: "A",
+          remark: "Sara stayed composed in traffic and consistently hit the first apex without correction.",
           createdAt: "2026-03-21T17:45:00.000Z",
         },
       ],
@@ -334,7 +378,7 @@ export function Surface({
           ? "radial-gradient(circle at top right, rgba(200,52,46,0.14), transparent 34%), linear-gradient(135deg, #FFFFFF 0%, #F8F4EF 100%)"
           : "linear-gradient(180deg, #FFFFFF 0%, #FBF8F4 100%)",
         border: `1px solid ${accent ? ADMIN_THEME.accentBorder : ADMIN_THEME.border}`,
-        borderRadius: "22px",
+        borderRadius: "18px",
         boxShadow: accent ? ADMIN_THEME.shadowStrong : ADMIN_THEME.shadow,
         position: "relative",
         overflow: "hidden",
@@ -349,8 +393,6 @@ export function Surface({
 export function SectionTitle({
   eyebrow,
   title,
-  detail,
-  subdetail,
   titleStyle,
 }: {
   eyebrow: string;
@@ -360,78 +402,36 @@ export function SectionTitle({
   titleStyle?: CSSProperties;
 }) {
   return (
-    <div style={{ marginBottom: "16px" }}>
+    <div style={{ marginBottom: "12px" }}>
       <p
         style={{
           color: ADMIN_THEME.accent,
-          fontSize: "11px",
+          fontSize: "10px",
           fontWeight: 700,
           letterSpacing: "0px",
           textTransform: "uppercase",
-          margin: "0 0 6px 0",
+          margin: "0 0 4px 0",
         }}
       >
         {eyebrow}
       </p>
-      {subdetail ? (
-        <div style={{ display: "grid", gap: "12px" }}>
-          <h2
-            style={{
-              color: ADMIN_THEME.heading,
-              fontSize: "28px",
-              fontFamily: "var(--font-heading)",
-              fontWeight: 900,
-              letterSpacing: "0px",
-              textTransform: "uppercase",
-              margin: 0,
-              lineHeight: 1,
-              ...titleStyle,
-            }}
-          >
-            {title}
-          </h2>
-          <span
-            style={{
-              color: ADMIN_THEME.subtle,
-              fontSize: "12px",
-              letterSpacing: "0px",
-              textTransform: "uppercase",
-            }}
-          >
-            {subdetail}
-          </span>
-        </div>
-      ) : (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
-          <h2
-            style={{
-              color: ADMIN_THEME.heading,
-              fontSize: "28px",
-              fontFamily: "var(--font-heading)",
-              fontWeight: 900,
-              letterSpacing: "0px",
-              textTransform: "uppercase",
-              margin: 0,
-              lineHeight: 1,
-              ...titleStyle,
-            }}
-          >
-            {title}
-          </h2>
-          {detail ? (
-            <span
-              style={{
-                color: ADMIN_THEME.subtle,
-                fontSize: "12px",
-                letterSpacing: "0px",
-                textTransform: "uppercase",
-              }}
-            >
-              {detail}
-            </span>
-          ) : null}
-        </div>
-      )}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap" }}>
+        <h2
+          style={{
+            color: ADMIN_THEME.heading,
+            fontSize: "24px",
+            fontFamily: "var(--font-heading)",
+            fontWeight: 900,
+            letterSpacing: "0px",
+            textTransform: "uppercase",
+            margin: 0,
+            lineHeight: 1,
+            ...titleStyle,
+          }}
+        >
+          {title}
+        </h2>
+      </div>
     </div>
   );
 }
@@ -440,7 +440,6 @@ export function MetricCard({
   icon,
   label,
   value,
-  note,
 }: {
   icon: ReactNode;
   label: string;
@@ -448,8 +447,8 @@ export function MetricCard({
   note: string;
 }) {
   return (
-    <Surface style={{ padding: "18px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "14px" }}>
+    <Surface style={{ padding: "14px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "12px" }}>
         <div>
           <p
             style={{
@@ -458,7 +457,7 @@ export function MetricCard({
               fontWeight: 700,
               letterSpacing: "0px",
               textTransform: "uppercase",
-              margin: "0 0 8px 0",
+              margin: "0 0 6px 0",
             }}
           >
             {label}
@@ -466,22 +465,21 @@ export function MetricCard({
           <p
             style={{
               color: ADMIN_THEME.heading,
-              fontSize: "30px",
+              fontSize: "26px",
               fontFamily: "var(--font-body)",
               fontWeight: 900,
-              margin: "0 0 6px 0",
+              margin: "0 0 4px 0",
               lineHeight: 1,
             }}
           >
             {value}
           </p>
-          <p style={{ color: ADMIN_THEME.muted, fontSize: "13px", margin: 0 }}>{note}</p>
         </div>
         <div
           style={{
-            width: "44px",
-            height: "44px",
-            borderRadius: "14px",
+            width: "40px",
+            height: "40px",
+            borderRadius: "12px",
             border: `1px solid ${ADMIN_THEME.accentBorder}`,
             backgroundColor: ADMIN_THEME.accentBg,
             display: "grid",
@@ -497,7 +495,7 @@ export function MetricCard({
   );
 }
 
-function FieldLabel({ children }: { children: ReactNode }) {
+export function FieldLabel({ children }: { children: ReactNode }) {
   return (
     <label
       style={{
@@ -507,7 +505,7 @@ function FieldLabel({ children }: { children: ReactNode }) {
         fontWeight: 700,
         letterSpacing: "0px",
         textTransform: "uppercase",
-        marginBottom: "8px",
+        marginBottom: "6px",
       }}
     >
       {children}
@@ -515,14 +513,14 @@ function FieldLabel({ children }: { children: ReactNode }) {
   );
 }
 
-function FieldShell({ children }: { children: ReactNode }) {
+export function FieldShell({ children }: { children: ReactNode }) {
   return (
     <div
       style={{
         backgroundColor: ADMIN_THEME.inputBg,
         border: `1px solid ${ADMIN_THEME.inputBorder}`,
-        borderRadius: "14px",
-        padding: "0 14px",
+        borderRadius: "12px",
+        padding: "0 12px",
         boxShadow: "inset 0 1px 0 rgba(255,255,255,0.75)",
       }}
     >
@@ -536,37 +534,128 @@ export function ActionButton({
   secondary,
   type = "button",
   onClick,
+  disabled,
   style,
 }: {
   children: ReactNode;
   secondary?: boolean;
   type?: "button" | "submit";
   onClick?: () => void;
+  disabled?: boolean;
   style?: CSSProperties;
 }) {
   return (
     <button
       type={type}
       onClick={onClick}
+      disabled={disabled}
       style={{
-        minHeight: "46px",
-        borderRadius: "14px",
-        padding: secondary ? "0 16px" : "0 18px",
+        minHeight: "40px",
+        borderRadius: "12px",
+        padding: secondary ? "0 14px" : "0 16px",
         border: secondary ? `1px solid ${ADMIN_THEME.border}` : "none",
-        background: secondary ? ADMIN_THEME.surfaceSoft : `linear-gradient(135deg, ${ADMIN_THEME.accent} 0%, ${ADMIN_THEME.accentDeep} 100%)`,
-        color: secondary ? ADMIN_THEME.heading : "#FFFFFF",
-        fontSize: "13px",
+        background: disabled ? ADMIN_THEME.surface : secondary ? ADMIN_THEME.surfaceSoft : `linear-gradient(135deg, ${ADMIN_THEME.accent} 0%, ${ADMIN_THEME.accentDeep} 100%)`,
+        color: disabled ? ADMIN_THEME.subtle : secondary ? ADMIN_THEME.heading : "#FFFFFF",
+        fontSize: "12px",
         fontFamily: "var(--font-body)",
         fontWeight: 800,
         letterSpacing: "0px",
         textTransform: "uppercase",
-        cursor: "pointer",
-        boxShadow: secondary ? "none" : "0 12px 24px rgba(200,52,46,0.18)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        boxShadow: secondary ? "none" : "0 10px 20px rgba(200,52,46,0.16)",
+        opacity: disabled ? 0.7 : 1,
         ...style,
       }}
     >
       {children}
     </button>
+  );
+}
+
+export function CohortSwitcher({
+  cohorts,
+  selectedCohortId,
+  onSelect,
+}: {
+  cohorts: Cohort[];
+  selectedCohortId: string;
+  onSelect: (cohortId: string) => void;
+}) {
+  const activeCohorts = cohorts.filter((c) => !c.archived);
+  if (activeCohorts.length <= 1) return null;
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        minWidth: "238px",
+        height: "46px",
+        borderRadius: "14px",
+        border: `1px solid ${ADMIN_THEME.accentBorder}`,
+        background: "linear-gradient(180deg, rgba(200,52,46,0.10) 0%, rgba(255,255,255,0.96) 100%)",
+        boxShadow: "0 12px 24px rgba(200,52,46,0.10), inset 0 1px 0 rgba(255,255,255,0.76)",
+      }}
+    >
+      <span
+        style={{
+          position: "absolute",
+          left: "10px",
+          top: "50%",
+          transform: "translateY(-50%)",
+          padding: "4px 8px",
+          borderRadius: "999px",
+          border: `1px solid ${ADMIN_THEME.accentBorder}`,
+          backgroundColor: ADMIN_THEME.accentBg,
+          color: ADMIN_THEME.accent,
+          fontSize: "9px",
+          fontWeight: 800,
+          textTransform: "uppercase",
+          pointerEvents: "none",
+          whiteSpace: "nowrap",
+        }}
+      >
+        Cohort
+      </span>
+      <select
+        value={selectedCohortId}
+        onChange={(e) => onSelect(e.target.value)}
+        aria-label="Switch cohort"
+        style={{
+          width: "100%",
+          height: "100%",
+          padding: "0 40px 0 84px",
+          borderRadius: "14px",
+          border: "none",
+          background: "transparent",
+          color: ADMIN_THEME.heading,
+          fontSize: "13px",
+          fontFamily: "var(--font-body)",
+          fontWeight: 800,
+          outline: "none",
+          cursor: "pointer",
+          appearance: "none",
+        }}
+      >
+      {activeCohorts.map((cohort) => (
+        <option key={cohort.id} value={cohort.id}>
+          {cohort.name} — {cohort.program}
+        </option>
+      ))}
+      </select>
+      <span
+        style={{
+          position: "absolute",
+          right: "12px",
+          top: "50%",
+          transform: "translateY(-50%)",
+          color: ADMIN_THEME.accent,
+          pointerEvents: "none",
+          display: "inline-flex",
+        }}
+      >
+        <ChevronDown size={16} />
+      </span>
+    </div>
   );
 }
 
@@ -1615,7 +1704,7 @@ export function AdminDashboard({
   );
 }
 
-const inputStyle: CSSProperties = {
+export const inputStyle: CSSProperties = {
   width: "100%",
   height: "46px",
   background: "transparent",
@@ -1626,7 +1715,7 @@ const inputStyle: CSSProperties = {
   fontFamily: "var(--font-body)",
 };
 
-const textareaStyle: CSSProperties = {
+export const textareaStyle: CSSProperties = {
   width: "100%",
   minHeight: "96px",
   padding: "12px 0",

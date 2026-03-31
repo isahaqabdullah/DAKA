@@ -3,6 +3,7 @@ import { ArrowLeft, CalendarDays, GraduationCap, Plus, X } from "lucide-react";
 import {
   ActionButton,
   ADMIN_THEME,
+  CohortSwitcher,
   MetricCard,
   SectionTitle,
   STORAGE_KEY,
@@ -11,6 +12,7 @@ import {
   loadCohorts,
   type Cohort,
   type ScheduledClass,
+  type StudentRecord,
   type SyllabusItem,
   type SyllabusStatus,
 } from "./AdminDashboard";
@@ -156,11 +158,13 @@ function FieldShell({ children }: { children: ReactNode }) {
 interface AdminCohortTeachingPageProps {
   initialCohortId?: string;
   onBackToCohortDashboard?: (cohortId: string) => void;
+  onSelectCohort?: (cohortId: string) => void;
 }
 
 export function AdminCohortTeachingPage({
   initialCohortId,
   onBackToCohortDashboard,
+  onSelectCohort,
 }: AdminCohortTeachingPageProps) {
   const [cohorts, setCohorts] = useState<Cohort[]>(() => loadCohorts());
   const [selectedCohortId, setSelectedCohortId] = useState(() => initialCohortId ?? loadCohorts()[0]?.id ?? "");
@@ -176,13 +180,19 @@ export function AdminCohortTeachingPage({
   const [syllabusSearch, setSyllabusSearch] = useState("");
   const [classFilter, setClassFilter] = useState<"all" | "upcoming" | "past">("upcoming");
   const [syllabusFilter, setSyllabusFilter] = useState<"all" | SyllabusStatus>("all");
-  const [isTeachingEditMode, setIsTeachingEditMode] = useState(false);
+  const [activeTab, setActiveTab] = useState<"schedule" | "syllabus">("schedule");
+  const [isScheduleEditMode, setIsScheduleEditMode] = useState(false);
+  const [isSyllabusEditMode, setIsSyllabusEditMode] = useState(false);
+  const [showBulkPlanner, setShowBulkPlanner] = useState(false);
   const [editingClassId, setEditingClassId] = useState<string | null>(null);
   const [editingClassDraft, setEditingClassDraft] = useState<ClassDraft | null>(null);
   const [editingSyllabusId, setEditingSyllabusId] = useState<string | null>(null);
   const [editingSyllabusDraft, setEditingSyllabusDraft] = useState<SyllabusDraft | null>(null);
+  const [bulkDraft, setBulkDraft] = useState({ count: "4", intervalDays: "7" });
+  const [conflictWarning, setConflictWarning] = useState("");
 
   const selectedCohort = cohorts.find((cohort) => cohort.id === selectedCohortId) ?? cohorts[0];
+  const isTeachingEditMode = isScheduleEditMode || isSyllabusEditMode;
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cohorts));
@@ -203,7 +213,9 @@ export function AdminCohortTeachingPage({
     setSyllabusSearch("");
     setClassFilter("upcoming");
     setSyllabusFilter("all");
-    setIsTeachingEditMode(false);
+    setIsScheduleEditMode(false);
+    setIsSyllabusEditMode(false);
+    setShowBulkPlanner(false);
     setEditingClassId(null);
     setEditingClassDraft(null);
     setEditingSyllabusId(null);
@@ -222,6 +234,12 @@ export function AdminCohortTeachingPage({
     );
   }
 
+  function handleToggleTeachingEditMode() {
+    const nextMode = !isTeachingEditMode;
+    setIsScheduleEditMode(nextMode);
+    setIsSyllabusEditMode(nextMode);
+  }
+
   function resetSyllabusForm(nextIndex = (selectedCohort?.syllabus.length ?? 0) + 1) {
     setEditingSyllabusId(null);
     setSyllabusDraft(buildSyllabusDraft(nextIndex));
@@ -237,16 +255,6 @@ export function AdminCohortTeachingPage({
     setEditingSyllabusDraft(null);
   }
 
-  function handleToggleTeachingEditMode() {
-    const nextValue = !isTeachingEditMode;
-    setIsTeachingEditMode(nextValue);
-
-    if (!nextValue) {
-      handleCloseClassEditModal();
-      handleCloseSyllabusEditModal();
-    }
-  }
-
   function handleClassSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -256,6 +264,7 @@ export function AdminCohortTeachingPage({
 
     const nextTrack = classDraft.track.trim() || selectedCohort.room;
     const nextCoach = classDraft.coach.trim() || selectedCohort.coach;
+    setConflictWarning(detectRoomConflict(classDraft.date, classDraft.time, nextTrack));
 
     const classId = createId("class");
 
@@ -310,6 +319,7 @@ export function AdminCohortTeachingPage({
 
     const nextTrack = editingClassDraft.track.trim() || selectedCohort.room;
     const nextCoach = editingClassDraft.coach.trim() || selectedCohort.coach;
+    setConflictWarning(detectRoomConflict(editingClassDraft.date, editingClassDraft.time, nextTrack, editingClassId));
 
     updateSelectedCohort((cohort) => ({
       ...cohort,
@@ -430,6 +440,50 @@ export function AdminCohortTeachingPage({
     }
   }
 
+  function detectRoomConflict(date: string, time: string, track: string, excludeClassId?: string): string {
+    if (!selectedCohort || !date || !time) return "";
+    const room = track.trim().toLowerCase();
+    for (const cohort of cohorts) {
+      if (cohort.id === selectedCohort.id) continue;
+      for (const session of cohort.classes) {
+        if (excludeClassId && session.id === excludeClassId) continue;
+        if (session.date === date && session.time === time && session.track.trim().toLowerCase() === room) {
+          return `Room conflict: "${cohort.name}" also has a class in ${session.track} on ${date} at ${time}.`;
+        }
+      }
+    }
+    return "";
+  }
+
+  function handleBulkGenerate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedCohort) return;
+    const count = Math.max(1, Math.min(24, Number(bulkDraft.count) || 4));
+    const intervalDays = Math.max(1, Number(bulkDraft.intervalDays) || 7);
+    const base = classDraft.date || getTodayDate();
+    const track = classDraft.track.trim() || selectedCohort.room;
+    const coach = classDraft.coach.trim() || selectedCohort.coach;
+
+    const newClasses: ScheduledClass[] = [];
+    for (let i = 0; i < count; i++) {
+      const date = getDatePlusDays(base, i * intervalDays);
+      const classId = createId("class");
+      newClasses.push({ id: classId, date, time: classDraft.time || "16:30", track, coach, topic: `Session ${selectedCohort.classes.length + i + 1}` });
+    }
+
+    updateSelectedCohort((cohort) => ({
+      ...cohort,
+      classes: [...cohort.classes, ...newClasses].sort((l, r) => getSessionTimestamp(l) - getSessionTimestamp(r)),
+      students: cohort.students.map((student) => ({
+        ...student,
+        attendance: newClasses.reduce<StudentRecord["attendance"]>(
+          (map, cls) => { map[cls.id] = "pending"; return map; },
+          { ...student.attendance },
+        ),
+      })),
+    }));
+  }
+
   if (!selectedCohort) {
     return null;
   }
@@ -443,6 +497,9 @@ export function AdminCohortTeachingPage({
   const nextModule = selectedCohort.syllabus.find((item) => item.status === "live") ?? selectedCohort.syllabus[0];
   const editingClass = selectedCohort.classes.find((session) => session.id === editingClassId);
   const editingSyllabus = selectedCohort.syllabus.find((item) => item.id === editingSyllabusId);
+  const activeStudents = selectedCohort.students.filter((student) => (student.status ?? "active") === "active");
+  const scheduledClasses = [...selectedCohort.classes].sort((left, right) => getSessionTimestamp(left) - getSessionTimestamp(right));
+  const syllabusItems = [...selectedCohort.syllabus];
   const normalizedSessionSearch = sessionSearch.trim().toLowerCase();
   const normalizedSyllabusSearch = syllabusSearch.trim().toLowerCase();
   const filteredClasses = selectedCohort.classes.filter((session) => {
@@ -517,23 +574,42 @@ export function AdminCohortTeachingPage({
               "radial-gradient(circle at top right, rgba(200,52,46,0.16), transparent 28%), linear-gradient(135deg, #FFFFFF 0%, #F8F4EF 100%)",
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", gap: "18px", flexWrap: "wrap" }}>
-            <div style={{ maxWidth: "760px", display: "grid", gap: "12px" }}>
-              {onBackToCohortDashboard ? (
-                <div style={{ display: "flex", justifyContent: "flex-start" }}>
-                  <ActionButton secondary onClick={() => onBackToCohortDashboard(selectedCohort.id)} style={{ minWidth: "196px" }}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                      <ArrowLeft size={16} /> Back To Cohort Dashboard
-                    </span>
-                  </ActionButton>
+          <div style={{ display: "grid", gap: "12px", position: "relative" }}>
+              <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "flex-start" }}>
+                {onBackToCohortDashboard ? (
+                  <button
+                    type="button"
+                    onClick={() => onBackToCohortDashboard(selectedCohort.id)}
+                    style={{
+                      width: "36px",
+                      height: "36px",
+                      borderRadius: "12px",
+                      border: `1px solid ${ADMIN_THEME.border}`,
+                      backgroundColor: ADMIN_THEME.surface,
+                      color: ADMIN_THEME.heading,
+                      display: "grid",
+                      placeItems: "center",
+                      cursor: "pointer",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <ArrowLeft size={16} />
+                  </button>
+                ) : null}
+                <div style={{ display: "grid", gap: "12px", flex: "1 1 420px" }}>
+                  <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
+                    <SectionTitle eyebrow="Teaching Operations" title="Schedule + Syllabus" detail={`${selectedCohort.name} · ${selectedCohort.program}`} titleStyle={{ fontSize: "24px" }} />
+                    <CohortSwitcher
+                      cohorts={cohorts}
+                      selectedCohortId={selectedCohort.id}
+                      onSelect={(cohortId) => {
+                        setSelectedCohortId(cohortId);
+                        onSelectCohort?.(cohortId);
+                      }}
+                    />
+                  </div>
                 </div>
-              ) : null}
-
-              <SectionTitle eyebrow="Teaching Operations" title={selectedCohort.name} detail={selectedCohort.program} />
-              <p style={{ color: ADMIN_THEME.muted, fontSize: "15px", lineHeight: 1.7, margin: 0 }}>
-                Schedule sessions and shape the syllabus from one focused workspace. Class planning, module sequencing,
-                search, and safe edit controls live together here instead of crowding the main cohort dashboard.
-              </p>
+              </div>
               <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
                 <span style={{ padding: "7px 10px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.accentBorder}`, backgroundColor: ADMIN_THEME.accentBg, color: ADMIN_THEME.accent, fontSize: "11px", letterSpacing: "0px", textTransform: "uppercase" }}>
                   {selectedCohort.cadence}
@@ -545,567 +621,427 @@ export function AdminCohortTeachingPage({
                   Coach {selectedCohort.coach}
                 </span>
               </div>
-            </div>
-
-            <div
-              style={{
-                minWidth: "280px",
-                padding: "18px",
-                borderRadius: "18px",
-                border: `1px solid ${ADMIN_THEME.border}`,
-                background: "linear-gradient(180deg, #FFFFFF 0%, #F7F2ED 100%)",
-                boxShadow: "0 12px 30px rgba(70,46,25,0.08)",
-                display: "grid",
-                gap: "8px",
-              }}
-            >
-              <p style={{ color: ADMIN_THEME.subtle, fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase", margin: 0 }}>
-                Next Teaching Focus
-              </p>
-              <h3 style={{ color: ADMIN_THEME.heading, fontSize: "26px", fontFamily: "var(--font-heading)", margin: 0, lineHeight: 1 }}>
-                {nextSession ? nextSession.topic : nextModule?.title ?? "No teaching items yet"}
-              </h3>
-              <p style={{ color: ADMIN_THEME.muted, fontSize: "14px", margin: 0 }}>
-                {nextSession
-                  ? `${formatDateTime(nextSession.date, nextSession.time)} • ${nextSession.track}`
-                  : nextModule
-                    ? `${nextModule.weekLabel} • ${nextModule.status}`
-                    : "Add a session or syllabus block to get started."}
-              </p>
-            </div>
           </div>
         </Surface>
 
-        <div className="cohort-teaching-card-grid">
-          <MetricCard
-            icon={<CalendarDays size={20} />}
-            label="Scheduled Sessions"
-            value={String(selectedCohort.classes.length)}
-            note={nextSession ? `Next: ${formatDateTime(nextSession.date, nextSession.time)}` : "No sessions scheduled yet"}
-          />
-          <MetricCard
-            icon={<GraduationCap size={20} />}
-            label="Syllabus Progress"
-            value={`${completedModules}/${selectedCohort.syllabus.length}`}
-            note={liveModules > 0 ? `${liveModules} live modules in motion` : "No live modules flagged right now"}
-          />
-        </div>
-
-        <div className="cohort-teaching-two-up">
-          <div className="cohort-teaching-grid">
-            <Surface style={{ padding: "16px", alignSelf: "start" }}>
-              <SectionTitle
-                eyebrow="Class Planner"
-                title="Schedule Class"
-                detail={selectedCohort.cadence}
-                titleStyle={{ fontSize: "24px" }}
-              />
-              <form onSubmit={handleClassSubmit} className="cohort-teaching-form-grid">
-                <div>
-                  <FieldLabel>Date</FieldLabel>
-                  <FieldShell>
-                    <input
-                      type="date"
-                      value={classDraft.date}
-                      onChange={(event) => setClassDraft((current) => ({ ...current, date: event.target.value }))}
-                      style={inputStyle}
-                    />
-                  </FieldShell>
-                </div>
-                <div>
-                  <FieldLabel>Time</FieldLabel>
-                  <FieldShell>
-                    <input
-                      type="time"
-                      value={classDraft.time}
-                      onChange={(event) => setClassDraft((current) => ({ ...current, time: event.target.value }))}
-                      style={inputStyle}
-                    />
-                  </FieldShell>
-                </div>
-                <div>
-                  <FieldLabel>Track</FieldLabel>
-                  <FieldShell>
-                    <input
-                      value={classDraft.track}
-                      onChange={(event) => setClassDraft((current) => ({ ...current, track: event.target.value }))}
-                      placeholder={selectedCohort.room}
-                      style={inputStyle}
-                    />
-                  </FieldShell>
-                </div>
-                <div>
-                  <FieldLabel>Coach</FieldLabel>
-                  <FieldShell>
-                    <input
-                      value={classDraft.coach}
-                      onChange={(event) => setClassDraft((current) => ({ ...current, coach: event.target.value }))}
-                      placeholder={selectedCohort.coach}
-                      style={inputStyle}
-                    />
-                  </FieldShell>
-                </div>
-                <div className="cohort-teaching-full-span">
-                  <FieldLabel>Session Topic</FieldLabel>
-                  <FieldShell>
-                    <input
-                      value={classDraft.topic}
-                      onChange={(event) => setClassDraft((current) => ({ ...current, topic: event.target.value }))}
-                      placeholder="Set the drill or classroom focus for the session"
-                      style={inputStyle}
-                    />
-                  </FieldShell>
-                </div>
-                <div className="cohort-teaching-full-span" style={{ display: "grid", gap: "10px" }}>
-                  <p style={{ color: ADMIN_THEME.subtle, fontSize: "11px", lineHeight: 1.45, margin: 0 }}>
-                    Every new session automatically adds a pending attendance placeholder for every student in this cohort.
-                    After scheduling, the form rolls forward by one week to speed up recurring planning.
-                  </p>
-                  <ActionButton type="submit" style={{ minWidth: "158px", justifySelf: "end" }}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                      <Plus size={14} /> Schedule Class
-                    </span>
-                  </ActionButton>
-                </div>
-              </form>
-            </Surface>
-
-            <Surface style={{ padding: "16px", alignSelf: "start" }}>
-              <SectionTitle
-                eyebrow="Syllabus Builder"
-                title="Add Syllabus Block"
-                detail={`${selectedCohort.syllabus.length} current blocks`}
-                titleStyle={{ fontSize: "24px" }}
-              />
-              <form onSubmit={handleSyllabusSubmit} className="cohort-teaching-form-grid">
-                <div>
-                  <FieldLabel>Week Label</FieldLabel>
-                  <FieldShell>
-                    <input
-                      value={syllabusDraft.weekLabel}
-                      onChange={(event) => setSyllabusDraft((current) => ({ ...current, weekLabel: event.target.value }))}
-                      placeholder="Week 04"
-                      style={inputStyle}
-                    />
-                  </FieldShell>
-                </div>
-                <div>
-                  <FieldLabel>Status</FieldLabel>
-                  <FieldShell>
-                    <select
-                      value={syllabusDraft.status}
-                      onChange={(event) => setSyllabusDraft((current) => ({ ...current, status: event.target.value as SyllabusStatus }))}
-                      style={inputStyle}
-                    >
-                      <option value="planned">Planned</option>
-                      <option value="live">Live</option>
-                      <option value="complete">Complete</option>
-                    </select>
-                  </FieldShell>
-                </div>
-                <div className="cohort-teaching-full-span">
-                  <FieldLabel>Module Title</FieldLabel>
-                  <FieldShell>
-                    <input
-                      value={syllabusDraft.title}
-                      onChange={(event) => setSyllabusDraft((current) => ({ ...current, title: event.target.value }))}
-                      placeholder="Braking release and exit drive"
-                      style={inputStyle}
-                    />
-                  </FieldShell>
-                </div>
-                <div className="cohort-teaching-full-span">
-                  <FieldLabel>Objective</FieldLabel>
-                  <FieldShell>
-                    <textarea
-                      value={syllabusDraft.objective}
-                      onChange={(event) => setSyllabusDraft((current) => ({ ...current, objective: event.target.value }))}
-                      placeholder="Describe what students should leave the session knowing."
-                      style={textareaStyle}
-                    />
-                  </FieldShell>
-                </div>
-                <div className="cohort-teaching-full-span" style={{ display: "grid", gap: "10px" }}>
-                  <p style={{ color: ADMIN_THEME.subtle, fontSize: "11px", lineHeight: 1.45, margin: 0 }}>
-                    Keep live, planned, and complete modules accurate here so coaches can see the real teaching sequence at a glance.
-                  </p>
-                  <ActionButton type="submit" style={{ minWidth: "162px", justifySelf: "end" }}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                      <Plus size={14} /> Add Syllabus
-                    </span>
-                  </ActionButton>
-                </div>
-              </form>
-            </Surface>
+        <Surface style={{ padding: "16px", display: "grid", gap: "12px" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", flexWrap: "wrap", alignItems: "center" }}>
+            <SectionTitle eyebrow="Schedule" title="Add Session" titleStyle={{ fontSize: "24px" }} />
+            <ActionButton secondary type="button" onClick={() => setShowBulkPlanner((current) => !current)} style={{ minWidth: "176px", minHeight: "36px" }}>
+              {showBulkPlanner ? "Hide Mass Schedule" : "Mass Schedule"}
+            </ActionButton>
           </div>
 
-          <div className="cohort-teaching-grid">
-            <Surface style={{ padding: "16px", alignSelf: "start" }}>
+          <form onSubmit={handleClassSubmit} className="cohort-teaching-form-grid">
+            <div>
+              <FieldLabel>Date</FieldLabel>
+              <FieldShell>
+                <input
+                  type="date"
+                  value={classDraft.date}
+                  onChange={(event) => setClassDraft((current) => ({ ...current, date: event.target.value }))}
+                  style={inputStyle}
+                />
+              </FieldShell>
+            </div>
+            <div>
+              <FieldLabel>Time</FieldLabel>
+              <FieldShell>
+                <input
+                  type="time"
+                  value={classDraft.time}
+                  onChange={(event) => setClassDraft((current) => ({ ...current, time: event.target.value }))}
+                  style={inputStyle}
+                />
+              </FieldShell>
+            </div>
+            <div>
+              <FieldLabel>Track</FieldLabel>
+              <FieldShell>
+                <input
+                  value={classDraft.track}
+                  onChange={(event) => setClassDraft((current) => ({ ...current, track: event.target.value }))}
+                  placeholder={selectedCohort.room}
+                  style={inputStyle}
+                />
+              </FieldShell>
+            </div>
+            <div>
+              <FieldLabel>Coach</FieldLabel>
+              <FieldShell>
+                <input
+                  value={classDraft.coach}
+                  onChange={(event) => setClassDraft((current) => ({ ...current, coach: event.target.value }))}
+                  placeholder={selectedCohort.coach}
+                  style={inputStyle}
+                />
+              </FieldShell>
+            </div>
+            <div className="cohort-teaching-full-span">
+              <FieldLabel>Session Topic</FieldLabel>
+              <FieldShell>
+                <input
+                  value={classDraft.topic}
+                  onChange={(event) => setClassDraft((current) => ({ ...current, topic: event.target.value }))}
+                  placeholder="Set the drill or classroom focus for the session"
+                  style={inputStyle}
+                />
+              </FieldShell>
+            </div>
+            <div className="cohort-teaching-full-span" style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+              {conflictWarning ? (
+                <span style={{ padding: "7px 10px", borderRadius: "999px", border: "1px solid rgba(245,158,11,0.22)", backgroundColor: "rgba(245,158,11,0.10)", color: "#9D6100", fontSize: "10px", fontWeight: 700, textTransform: "uppercase" }}>
+                  {conflictWarning}
+                </span>
+              ) : (
+                <span style={{ padding: "7px 10px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.accentBorder}`, backgroundColor: ADMIN_THEME.accentBg, color: ADMIN_THEME.accent, fontSize: "10px", fontWeight: 700, textTransform: "uppercase" }}>
+                  {selectedCohort.name}
+                </span>
+              )}
+              <ActionButton type="submit" style={{ minWidth: "158px", minHeight: "36px" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                  <Plus size={14} /> Schedule Session
+                </span>
+              </ActionButton>
+            </div>
+          </form>
+        </Surface>
+
+        {showBulkPlanner ? (
+          <Surface style={{ padding: "16px", display: "grid", gap: "12px" }}>
+            <SectionTitle eyebrow="Schedule" title="Mass Schedule Sessions" titleStyle={{ fontSize: "24px" }} />
+            <form onSubmit={handleBulkGenerate} className="cohort-teaching-form-grid">
+              <div>
+                <FieldLabel>Start Date</FieldLabel>
+                <FieldShell>
+                  <input
+                    type="date"
+                    value={classDraft.date}
+                    onChange={(event) => setClassDraft((current) => ({ ...current, date: event.target.value }))}
+                    style={inputStyle}
+                  />
+                </FieldShell>
+              </div>
+              <div>
+                <FieldLabel>Time</FieldLabel>
+                <FieldShell>
+                  <input
+                    type="time"
+                    value={classDraft.time}
+                    onChange={(event) => setClassDraft((current) => ({ ...current, time: event.target.value }))}
+                    style={inputStyle}
+                  />
+                </FieldShell>
+              </div>
+              <div>
+                <FieldLabel>Sessions</FieldLabel>
+                <FieldShell>
+                  <input
+                    type="number"
+                    min="1"
+                    max="24"
+                    value={bulkDraft.count}
+                    onChange={(event) => setBulkDraft((current) => ({ ...current, count: event.target.value }))}
+                    style={inputStyle}
+                  />
+                </FieldShell>
+              </div>
+              <div>
+                <FieldLabel>Every (days)</FieldLabel>
+                <FieldShell>
+                  <input
+                    type="number"
+                    min="1"
+                    value={bulkDraft.intervalDays}
+                    onChange={(event) => setBulkDraft((current) => ({ ...current, intervalDays: event.target.value }))}
+                    style={inputStyle}
+                  />
+                </FieldShell>
+              </div>
+              <div className="cohort-teaching-full-span" style={{ display: "flex", justifyContent: "space-between", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ padding: "7px 10px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.border}`, backgroundColor: ADMIN_THEME.surfaceSoft, color: ADMIN_THEME.heading, fontSize: "10px", fontWeight: 700, textTransform: "uppercase" }}>
+                  For {selectedCohort.name}
+                </span>
+                <ActionButton type="submit" style={{ minWidth: "186px", minHeight: "36px" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                    <Plus size={14} /> Generate Session Run
+                  </span>
+                </ActionButton>
+              </div>
+            </form>
+          </Surface>
+        ) : null}
+
+        <Surface style={{ padding: "16px", display: "grid", gap: "10px" }}>
+          <SectionTitle eyebrow="Schedule" title="Scheduled Sessions" titleStyle={{ fontSize: "24px" }} />
+          <div style={{ display: "grid", gap: "8px" }}>
+            {scheduledClasses.length === 0 ? (
               <div
                 style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: "10px",
-                  flexWrap: "wrap",
-                  alignItems: "flex-start",
-                  marginBottom: "10px",
+                  padding: "14px",
+                  borderRadius: "14px",
+                  border: `1px dashed ${ADMIN_THEME.border}`,
+                  color: ADMIN_THEME.subtle,
+                  fontSize: "13px",
+                  backgroundColor: ADMIN_THEME.surfaceSoft,
                 }}
               >
-                <SectionTitle
-                  eyebrow="Teaching Controls"
-                  title="Sessions + Syllabus"
-                  detail="Search and manage teaching items from one page"
-                  titleStyle={{ fontSize: "24px" }}
-                />
-                <button
-                  type="button"
-                  onClick={handleToggleTeachingEditMode}
-                  style={{
-                    minHeight: "34px",
-                    padding: "0 12px",
-                    borderRadius: "999px",
-                    border: `1px solid ${isTeachingEditMode ? ADMIN_THEME.accentBorder : ADMIN_THEME.border}`,
-                    backgroundColor: isTeachingEditMode ? ADMIN_THEME.accentBg : ADMIN_THEME.surface,
-                    color: isTeachingEditMode ? ADMIN_THEME.accent : ADMIN_THEME.heading,
-                    fontSize: "10px",
-                    fontWeight: 800,
-                    letterSpacing: "0px",
-                    textTransform: "uppercase",
-                    cursor: "pointer",
-                  }}
-                >
-                  {isTeachingEditMode ? "Done Editing" : "Edit Teaching Items"}
-                </button>
+                No sessions are scheduled for this cohort yet.
               </div>
-              <p style={{ color: ADMIN_THEME.subtle, fontSize: "11px", lineHeight: 1.45, margin: 0 }}>
-                Search classes and modules independently below. Turn on edit mode to reveal edit and delete actions across both lists.
-              </p>
-            </Surface>
+            ) : (
+              scheduledClasses.map((session) => {
+                const isUpcoming = getSessionTimestamp(session) >= now;
+                const hasPendingAttendance =
+                  !isUpcoming &&
+                  activeStudents.length > 0 &&
+                  activeStudents.some((student) => (student.attendance[session.id] ?? "pending") === "pending");
+                const isAttendanceMarked = !isUpcoming && activeStudents.length > 0 && !hasPendingAttendance;
 
-            <Surface style={{ padding: "16px", alignSelf: "start" }}>
-              <SectionTitle
-                eyebrow="Class Timeline"
-                title="Scheduled Sessions"
-                detail={
-                  classFilter === "all"
-                    ? `${filteredClasses.length}/${selectedCohort.classes.length} shown`
-                    : `${filteredClasses.length} ${classFilter}`
-                }
-                titleStyle={{ fontSize: "24px" }}
-              />
-              <div className="cohort-teaching-form-grid" style={{ marginBottom: "10px" }}>
-                <div>
-                  <FieldLabel>Search Sessions</FieldLabel>
-                  <FieldShell>
-                    <input
-                      value={sessionSearch}
-                      onChange={(event) => setSessionSearch(event.target.value)}
-                      placeholder="Search topic, track, coach, or date"
-                      style={inputStyle}
-                    />
-                  </FieldShell>
-                </div>
-                <div>
-                  <FieldLabel>View</FieldLabel>
-                  <FieldShell>
-                    <select value={classFilter} onChange={(event) => setClassFilter(event.target.value as "all" | "upcoming" | "past")} style={inputStyle}>
-                      <option value="upcoming">Upcoming</option>
-                      <option value="all">All Sessions</option>
-                      <option value="past">Past Sessions</option>
-                    </select>
-                  </FieldShell>
-                </div>
-              </div>
-              <div style={{ display: "grid", gap: "8px" }}>
-                {selectedCohort.classes.length === 0 ? (
+                return (
                   <div
+                    key={session.id}
                     style={{
-                      padding: "14px",
+                      padding: "12px",
                       borderRadius: "14px",
-                      border: `1px dashed ${ADMIN_THEME.border}`,
-                      color: ADMIN_THEME.subtle,
-                      fontSize: "13px",
-                      backgroundColor: ADMIN_THEME.surfaceSoft,
+                      display: "grid",
+                      gap: "8px",
+                      ...nestedCardStyle,
                     }}
                   >
-                    No sessions are scheduled for this cohort yet.
-                  </div>
-                ) : filteredClasses.length === 0 ? (
-                  <div
-                    style={{
-                      padding: "14px",
-                      borderRadius: "14px",
-                      border: `1px dashed ${ADMIN_THEME.border}`,
-                      color: ADMIN_THEME.subtle,
-                      fontSize: "13px",
-                      backgroundColor: ADMIN_THEME.surfaceSoft,
-                    }}
-                  >
-                    No sessions match the current search or filter.
-                  </div>
-                ) : (
-                  filteredClasses.map((session) => {
-                    const isUpcoming = getSessionTimestamp(session) >= now;
-
-                    return (
-                      <div
-                        key={session.id}
-                        style={{
-                          padding: "12px",
-                          borderRadius: "14px",
-                          display: "grid",
-                          gap: "8px",
-                          ...nestedCardStyle,
-                          border:
-                            editingClassId === session.id
-                              ? `1px solid ${ADMIN_THEME.accentBorder}`
-                              : nestedCardStyle.border,
-                        }}
-                      >
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", flexWrap: "wrap", alignItems: "flex-start" }}>
-                          <div style={{ display: "grid", gap: "4px" }}>
-                            <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase", margin: 0 }}>
-                              {formatDateTime(session.date, session.time)}
-                            </p>
-                            <h4 style={{ color: ADMIN_THEME.heading, fontSize: "16px", fontFamily: "var(--font-body)", fontStyle: "italic", fontWeight: 800, margin: 0 }}>
-                              {session.topic}
-                            </h4>
-                          </div>
-                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                            <span
-                              style={{
-                                padding: "6px 9px",
-                                borderRadius: "999px",
-                                backgroundColor: isUpcoming ? ADMIN_THEME.accentBg : ADMIN_THEME.surface,
-                                border: `1px solid ${isUpcoming ? ADMIN_THEME.accentBorder : ADMIN_THEME.borderSoft}`,
-                                color: isUpcoming ? ADMIN_THEME.accent : ADMIN_THEME.muted,
-                                fontSize: "10px",
-                                letterSpacing: "0px",
-                                textTransform: "uppercase",
-                              }}
-                            >
-                              {isUpcoming ? "Upcoming" : "Past"}
-                            </span>
-                            {isTeachingEditMode ? (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => handleClassEdit(session)}
-                                  style={{
-                                    minHeight: "30px",
-                                    padding: "0 9px",
-                                    borderRadius: "999px",
-                                    border: `1px solid ${ADMIN_THEME.border}`,
-                                    backgroundColor:
-                                      editingClassId === session.id ? ADMIN_THEME.accentBg : ADMIN_THEME.surface,
-                                    color: ADMIN_THEME.heading,
-                                    fontSize: "10px",
-                                    fontWeight: 800,
-                                    letterSpacing: "0px",
-                                    textTransform: "uppercase",
-                                    cursor: "pointer",
-                                  }}
-                                >
-                                  {editingClassId === session.id ? "Editing" : "Edit"}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleClassDelete(session)}
-                                  style={{
-                                    minHeight: "30px",
-                                    padding: "0 9px",
-                                    borderRadius: "999px",
-                                    border: `1px solid ${ADMIN_THEME.accentBorder}`,
-                                    backgroundColor: ADMIN_THEME.accentBg,
-                                    color: ADMIN_THEME.accent,
-                                    fontSize: "10px",
-                                    fontWeight: 800,
-                                    letterSpacing: "0px",
-                                    textTransform: "uppercase",
-                                    cursor: "pointer",
-                                  }}
-                                >
-                                  Delete
-                                </button>
-                              </>
-                            ) : null}
-                          </div>
-                        </div>
-                        <p style={{ color: ADMIN_THEME.muted, fontSize: "12px", margin: 0 }}>
-                          {session.track} | Coach {session.coach}
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", flexWrap: "wrap", alignItems: "flex-start" }}>
+                      <div style={{ display: "grid", gap: "4px" }}>
+                        <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", textTransform: "uppercase", margin: 0 }}>
+                          {formatDateTime(session.date, session.time)}
                         </p>
-                        <p style={{ color: ADMIN_THEME.subtle, fontSize: "11px", lineHeight: 1.45, margin: 0 }}>
-                          {selectedCohort.students.length} attendance placeholders are ready for this session.
-                        </p>
+                        <h4 style={{ color: ADMIN_THEME.heading, fontSize: "16px", fontFamily: "var(--font-body)", fontStyle: "italic", fontWeight: 800, margin: 0 }}>
+                          {session.topic}
+                        </h4>
                       </div>
-                    );
-                  })
-                )}
-              </div>
-            </Surface>
-
-            <Surface style={{ padding: "16px", alignSelf: "start" }}>
-              <SectionTitle
-                eyebrow="Syllabus Board"
-                title="Current Training Blocks"
-                detail={
-                  syllabusFilter === "all"
-                    ? `${filteredSyllabus.length}/${selectedCohort.syllabus.length} shown`
-                    : `${filteredSyllabus.length} ${syllabusFilter}`
-                }
-                titleStyle={{ fontSize: "24px" }}
-              />
-              <div className="cohort-teaching-form-grid" style={{ marginBottom: "10px" }}>
-                <div>
-                  <FieldLabel>Search Modules</FieldLabel>
-                  <FieldShell>
-                    <input
-                      value={syllabusSearch}
-                      onChange={(event) => setSyllabusSearch(event.target.value)}
-                      placeholder="Search week, title, objective, or status"
-                      style={inputStyle}
-                    />
-                  </FieldShell>
-                </div>
-                <div>
-                  <FieldLabel>Status Filter</FieldLabel>
-                  <FieldShell>
-                    <select value={syllabusFilter} onChange={(event) => setSyllabusFilter(event.target.value as "all" | SyllabusStatus)} style={inputStyle}>
-                      <option value="all">All Statuses</option>
-                      <option value="planned">Planned</option>
-                      <option value="live">Live</option>
-                      <option value="complete">Complete</option>
-                    </select>
-                  </FieldShell>
-                </div>
-              </div>
-              <div style={{ display: "grid", gap: "8px" }}>
-                {selectedCohort.syllabus.length === 0 ? (
-                  <div
-                    style={{
-                      padding: "14px",
-                      borderRadius: "14px",
-                      border: `1px dashed ${ADMIN_THEME.border}`,
-                      color: ADMIN_THEME.subtle,
-                      fontSize: "13px",
-                      backgroundColor: ADMIN_THEME.surfaceSoft,
-                    }}
-                  >
-                    No syllabus blocks have been added for this cohort yet.
-                  </div>
-                ) : filteredSyllabus.length === 0 ? (
-                  <div
-                    style={{
-                      padding: "14px",
-                      borderRadius: "14px",
-                      border: `1px dashed ${ADMIN_THEME.border}`,
-                      color: ADMIN_THEME.subtle,
-                      fontSize: "13px",
-                      backgroundColor: ADMIN_THEME.surfaceSoft,
-                    }}
-                  >
-                    No syllabus blocks match the current search or filter.
-                  </div>
-                ) : (
-                  filteredSyllabus.map((item) => {
-                    const colors = SYLLABUS_COLORS[item.status];
-
-                    return (
-                      <div
-                        key={item.id}
-                        style={{
-                          padding: "12px",
-                          borderRadius: "14px",
-                          display: "grid",
-                          gap: "8px",
-                          ...nestedCardStyle,
-                          border:
-                            editingSyllabusId === item.id
-                              ? `1px solid ${ADMIN_THEME.accentBorder}`
-                              : nestedCardStyle.border,
-                        }}
-                      >
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", flexWrap: "wrap", alignItems: "flex-start" }}>
-                          <div style={{ display: "grid", gap: "4px" }}>
-                            <p style={{ color: ADMIN_THEME.subtle, fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase", margin: 0 }}>
-                              {item.weekLabel}
-                            </p>
-                            <h4 style={{ color: ADMIN_THEME.heading, fontSize: "16px", fontFamily: "var(--font-body)", fontStyle: "italic", fontWeight: 800, margin: 0 }}>
-                              {item.title}
-                            </h4>
-                          </div>
-                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                            <span
-                              style={{
-                                padding: "6px 9px",
-                                borderRadius: "999px",
-                                backgroundColor: colors.bg,
-                                border: `1px solid ${colors.border}`,
-                                color: colors.text,
-                                fontSize: "10px",
-                                letterSpacing: "0px",
-                                textTransform: "uppercase",
-                              }}
-                            >
-                              {item.status}
-                            </span>
-                            {isTeachingEditMode ? (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => handleSyllabusEdit(item)}
-                                  style={{
-                                    minHeight: "30px",
-                                    padding: "0 9px",
-                                    borderRadius: "999px",
-                                    border: `1px solid ${ADMIN_THEME.border}`,
-                                    backgroundColor:
-                                      editingSyllabusId === item.id ? ADMIN_THEME.accentBg : ADMIN_THEME.surface,
-                                    color: ADMIN_THEME.heading,
-                                    fontSize: "10px",
-                                    fontWeight: 800,
-                                    letterSpacing: "0px",
-                                    textTransform: "uppercase",
-                                    cursor: "pointer",
-                                  }}
-                                >
-                                  {editingSyllabusId === item.id ? "Editing" : "Edit"}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleSyllabusDelete(item)}
-                                  style={{
-                                    minHeight: "30px",
-                                    padding: "0 9px",
-                                    borderRadius: "999px",
-                                    border: `1px solid ${ADMIN_THEME.accentBorder}`,
-                                    backgroundColor: ADMIN_THEME.accentBg,
-                                    color: ADMIN_THEME.accent,
-                                    fontSize: "10px",
-                                    fontWeight: 800,
-                                    letterSpacing: "0px",
-                                    textTransform: "uppercase",
-                                    cursor: "pointer",
-                                  }}
-                                >
-                                  Delete
-                                </button>
-                              </>
-                            ) : null}
-                          </div>
-                        </div>
-                        <p style={{ color: ADMIN_THEME.muted, fontSize: "12px", lineHeight: 1.45, margin: 0 }}>
-                          {item.objective || "No objective saved for this syllabus block yet."}
-                        </p>
+                      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                        {isUpcoming ? (
+                          <span style={{ padding: "6px 9px", borderRadius: "999px", backgroundColor: ADMIN_THEME.accentBg, border: `1px solid ${ADMIN_THEME.accentBorder}`, color: ADMIN_THEME.accent, fontSize: "10px", textTransform: "uppercase" }}>
+                            Upcoming
+                          </span>
+                        ) : hasPendingAttendance ? (
+                          <span style={{ padding: "6px 9px", borderRadius: "999px", backgroundColor: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.28)", color: "#9D6100", fontSize: "10px", textTransform: "uppercase" }}>
+                            Attendance Pending
+                          </span>
+                        ) : isAttendanceMarked ? (
+                          <span style={{ padding: "6px 9px", borderRadius: "999px", backgroundColor: "rgba(34,197,94,0.10)", border: "1px solid rgba(34,197,94,0.22)", color: "#247A44", fontSize: "10px", textTransform: "uppercase" }}>
+                            Marked
+                          </span>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => handleClassEdit(session)}
+                          style={{
+                            minHeight: "30px",
+                            padding: "0 9px",
+                            borderRadius: "999px",
+                            border: `1px solid ${ADMIN_THEME.border}`,
+                            backgroundColor: ADMIN_THEME.surface,
+                            color: ADMIN_THEME.heading,
+                            fontSize: "10px",
+                            fontWeight: 800,
+                            textTransform: "uppercase",
+                            cursor: "pointer",
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleClassDelete(session)}
+                          style={{
+                            minHeight: "30px",
+                            padding: "0 9px",
+                            borderRadius: "999px",
+                            border: `1px solid ${ADMIN_THEME.accentBorder}`,
+                            backgroundColor: ADMIN_THEME.accentBg,
+                            color: ADMIN_THEME.accent,
+                            fontSize: "10px",
+                            fontWeight: 800,
+                            textTransform: "uppercase",
+                            cursor: "pointer",
+                          }}
+                        >
+                          Delete
+                        </button>
                       </div>
-                    );
-                  })
-                )}
-              </div>
-            </Surface>
+                    </div>
+                    <p style={{ color: ADMIN_THEME.muted, fontSize: "12px", margin: 0 }}>
+                      {session.track} | Coach {session.coach}
+                    </p>
+                  </div>
+                );
+              })
+            )}
           </div>
+        </Surface>
+
+        <Surface style={{ padding: "16px", display: "grid", gap: "12px" }}>
+          <SectionTitle eyebrow="Syllabus" title="Add Syllabus Block" titleStyle={{ fontSize: "24px" }} />
+          <form onSubmit={handleSyllabusSubmit} className="cohort-teaching-form-grid">
+            <div>
+              <FieldLabel>Week Label</FieldLabel>
+              <FieldShell>
+                <input
+                  value={syllabusDraft.weekLabel}
+                  onChange={(event) => setSyllabusDraft((current) => ({ ...current, weekLabel: event.target.value }))}
+                  placeholder="Week 04"
+                  style={inputStyle}
+                />
+              </FieldShell>
+            </div>
+            <div>
+              <FieldLabel>Status</FieldLabel>
+              <FieldShell>
+                <select
+                  value={syllabusDraft.status}
+                  onChange={(event) => setSyllabusDraft((current) => ({ ...current, status: event.target.value as SyllabusStatus }))}
+                  style={inputStyle}
+                >
+                  <option value="planned">Planned</option>
+                  <option value="live">Live</option>
+                  <option value="complete">Complete</option>
+                </select>
+              </FieldShell>
+            </div>
+            <div className="cohort-teaching-full-span">
+              <FieldLabel>Module Title</FieldLabel>
+              <FieldShell>
+                <input
+                  value={syllabusDraft.title}
+                  onChange={(event) => setSyllabusDraft((current) => ({ ...current, title: event.target.value }))}
+                  placeholder="Braking release and exit drive"
+                  style={inputStyle}
+                />
+              </FieldShell>
+            </div>
+            <div className="cohort-teaching-full-span">
+              <FieldLabel>Objective</FieldLabel>
+              <FieldShell>
+                <textarea
+                  value={syllabusDraft.objective}
+                  onChange={(event) => setSyllabusDraft((current) => ({ ...current, objective: event.target.value }))}
+                  placeholder="Describe what students should leave the session knowing."
+                  style={textareaStyle}
+                />
+              </FieldShell>
+            </div>
+            <div className="cohort-teaching-full-span" style={{ display: "flex", justifyContent: "flex-end" }}>
+              <ActionButton type="submit" style={{ minWidth: "162px", minHeight: "36px" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                  <Plus size={14} /> Add Syllabus
+                </span>
+              </ActionButton>
+            </div>
+          </form>
+        </Surface>
+
+        <Surface style={{ padding: "16px", display: "grid", gap: "10px" }}>
+          <SectionTitle eyebrow="Syllabus" title="Current Blocks" titleStyle={{ fontSize: "24px" }} />
+          <div style={{ display: "grid", gap: "8px" }}>
+            {syllabusItems.length === 0 ? (
+              <div
+                style={{
+                  padding: "14px",
+                  borderRadius: "14px",
+                  border: `1px dashed ${ADMIN_THEME.border}`,
+                  color: ADMIN_THEME.subtle,
+                  fontSize: "13px",
+                  backgroundColor: ADMIN_THEME.surfaceSoft,
+                }}
+              >
+                No syllabus blocks have been added for this cohort yet.
+              </div>
+            ) : (
+              syllabusItems.map((item) => {
+                const colors = SYLLABUS_COLORS[item.status];
+
+                return (
+                  <div
+                    key={item.id}
+                    style={{
+                      padding: "12px",
+                      borderRadius: "14px",
+                      display: "grid",
+                      gap: "8px",
+                      ...nestedCardStyle,
+                    }}
+                  >
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: "10px", flexWrap: "wrap", alignItems: "flex-start" }}>
+                      <div style={{ display: "grid", gap: "4px" }}>
+                        <p style={{ color: ADMIN_THEME.subtle, fontSize: "10px", textTransform: "uppercase", margin: 0 }}>
+                          {item.weekLabel}
+                        </p>
+                        <h4 style={{ color: ADMIN_THEME.heading, fontSize: "16px", fontFamily: "var(--font-body)", fontStyle: "italic", fontWeight: 800, margin: 0 }}>
+                          {item.title}
+                        </h4>
+                      </div>
+                      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                        <span
+                          style={{
+                            padding: "6px 9px",
+                            borderRadius: "999px",
+                            backgroundColor: colors.bg,
+                            border: `1px solid ${colors.border}`,
+                            color: colors.text,
+                            fontSize: "10px",
+                            textTransform: "uppercase",
+                          }}
+                        >
+                          {item.status}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleSyllabusEdit(item)}
+                          style={{
+                            minHeight: "30px",
+                            padding: "0 9px",
+                            borderRadius: "999px",
+                            border: `1px solid ${ADMIN_THEME.border}`,
+                            backgroundColor: ADMIN_THEME.surface,
+                            color: ADMIN_THEME.heading,
+                            fontSize: "10px",
+                            fontWeight: 800,
+                            textTransform: "uppercase",
+                            cursor: "pointer",
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSyllabusDelete(item)}
+                          style={{
+                            minHeight: "30px",
+                            padding: "0 9px",
+                            borderRadius: "999px",
+                            border: `1px solid ${ADMIN_THEME.accentBorder}`,
+                            backgroundColor: ADMIN_THEME.accentBg,
+                            color: ADMIN_THEME.accent,
+                            fontSize: "10px",
+                            fontWeight: 800,
+                            textTransform: "uppercase",
+                            cursor: "pointer",
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                    <p style={{ color: ADMIN_THEME.muted, fontSize: "12px", lineHeight: 1.45, margin: 0 }}>
+                      {item.objective || "No objective saved for this syllabus block yet."}
+                    </p>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </Surface>
+
         </div>
-      </div>
 
       {editingClass && editingClassDraft ? (
         <div

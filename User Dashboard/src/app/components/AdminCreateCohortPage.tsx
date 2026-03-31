@@ -1,5 +1,5 @@
-import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
-import { ArrowLeft, ArrowRight, CalendarDays, GraduationCap, Plus, Users, X } from "lucide-react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { ArrowLeft, Plus, X } from "lucide-react";
 import {
   ActionButton,
   ADMIN_THEME,
@@ -110,11 +110,13 @@ function buildDraftFromCohort(cohort: Cohort) {
 }
 
 interface AdminCreateCohortPageProps {
+  mode?: "create" | "manage";
   onBackToLanding?: () => void;
   onOpenCreatedCohort?: (cohortId: string) => void;
 }
 
 export function AdminCreateCohortPage({
+  mode = "create",
   onBackToLanding,
   onOpenCreatedCohort,
 }: AdminCreateCohortPageProps) {
@@ -127,7 +129,6 @@ export function AdminCreateCohortPage({
   const [editErrorMessage, setEditErrorMessage] = useState("");
 
   const trimmedName = cohortDraft.name.trim();
-  const previewCapacity = Math.max(Number(cohortDraft.capacity) || 0, 0);
   const duplicateName = useMemo(
     () =>
       trimmedName.length > 0 &&
@@ -145,19 +146,21 @@ export function AdminCreateCohortPage({
       ),
     [cohorts, editingCohortDraft.name, editingCohortId],
   );
-  const displayedCohorts = useMemo(() => [...cohorts].sort((left, right) => left.name.localeCompare(right.name)), [cohorts]);
-  const cohortPortfolio = useMemo(
-    () =>
-      cohorts.reduce(
-        (summary, cohort) => ({
-          students: summary.students + cohort.students.length,
-          sessions: summary.sessions + cohort.classes.length,
-          announcements: summary.announcements + cohort.announcements.length,
-        }),
-        { students: 0, sessions: 0, announcements: 0 },
-      ),
+  const displayedCohorts = useMemo(
+    () => [...cohorts].sort((left, right) => {
+      if ((left.archived ?? false) !== (right.archived ?? false)) return left.archived ? 1 : -1;
+      return left.name.localeCompare(right.name);
+    }),
     [cohorts],
   );
+  const isCreateMode = mode === "create";
+  const [isCreatePanelOpen, setIsCreatePanelOpen] = useState(() => isCreateMode || cohorts.length === 0);
+
+  useEffect(() => {
+    if (isCreateMode || cohorts.length === 0) {
+      setIsCreatePanelOpen(true);
+    }
+  }, [cohorts.length, isCreateMode]);
 
   function updateDraft<K extends keyof ReturnType<typeof emptyCohortDraft>>(key: K, value: ReturnType<typeof emptyCohortDraft>[K]) {
     setCohortDraft((current) => ({
@@ -254,13 +257,20 @@ export function AdminCreateCohortPage({
 
     const nextCohorts = [...cohorts, nextCohort];
     persistCohorts(nextCohorts);
+    setCohortDraft(emptyCohortDraft());
+    setErrorMessage("");
 
     if (openDashboard && onOpenCreatedCohort) {
       onOpenCreatedCohort(nextCohort.id);
       return;
     }
 
-    onBackToLanding?.();
+    if (isCreateMode) {
+      onBackToLanding?.();
+      return;
+    }
+
+    setIsCreatePanelOpen(false);
   }
 
   function handleSaveCohortEdit() {
@@ -321,23 +331,26 @@ export function AdminCreateCohortPage({
     }
   }
 
+  function handleArchiveCohort(cohortId: string) {
+    const cohort = cohorts.find((c) => c.id === cohortId);
+    if (!cohort) return;
+    const nextCohorts = cohorts.map((c) =>
+      c.id === cohortId ? { ...c, archived: !c.archived } : c,
+    );
+    persistCohorts(nextCohorts);
+  }
+
   return (
     <>
       <style>{`
         .cohort-create-grid {
           display: grid;
-          grid-template-columns: minmax(0, 1.12fr) minmax(320px, 380px);
-          gap: 18px;
-          align-items: start;
+          gap: 12px;
         }
         .cohort-create-form-grid {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 14px;
-        }
-        .cohort-create-side-stack {
-          display: grid;
-          gap: 18px;
         }
         .cohort-existing-grid {
           display: grid;
@@ -348,7 +361,6 @@ export function AdminCreateCohortPage({
           grid-column: 1 / -1;
         }
         @media (max-width: 1120px) {
-          .cohort-create-grid,
           .cohort-create-form-grid {
             grid-template-columns: 1fr;
           }
@@ -374,257 +386,202 @@ export function AdminCreateCohortPage({
             }}
           />
 
-          <div style={{ display: "grid", gap: "16px", position: "relative" }}>
-            {onBackToLanding ? (
-              <div style={{ display: "flex", justifyContent: "flex-start" }}>
-                <ActionButton secondary onClick={onBackToLanding} style={{ minWidth: "176px" }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                    <ArrowLeft size={16} /> Back To Landing
-                  </span>
-                </ActionButton>
+          <div style={{ display: "grid", gap: "12px", position: "relative" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start", flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: "12px", alignItems: "flex-start", flexWrap: "wrap" }}>
+                {onBackToLanding ? (
+                  <button
+                    type="button"
+                    onClick={onBackToLanding}
+                    style={{
+                      width: "36px",
+                      height: "36px",
+                      borderRadius: "12px",
+                      border: `1px solid ${ADMIN_THEME.border}`,
+                      backgroundColor: ADMIN_THEME.surface,
+                      color: ADMIN_THEME.heading,
+                      display: "grid",
+                      placeItems: "center",
+                      cursor: "pointer",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <ArrowLeft size={16} />
+                  </button>
+                ) : null}
+                <SectionTitle
+                  eyebrow="Cohort Management"
+                  title={isCreateMode ? "Create Cohort" : "Create and Maintain Cohorts"}
+                  detail={
+                    isCreateMode
+                      ? "Set up a new cohort desk and open it once the setup is complete."
+                      : "Create new cohorts here, then edit, archive, delete, and open existing cohort desks."
+                  }
+                />
               </div>
-            ) : null}
-
-            <SectionTitle eyebrow="Cohort Setup" title="Create + Manage Cohorts" detail="Dedicated subpage for new desks and existing cohorts" />
-
-            <p style={{ color: ADMIN_THEME.muted, fontSize: "16px", lineHeight: 1.7, margin: 0, maxWidth: "860px" }}>
-              Create new cohort desks here, or manage existing ones without going back to landing. New cohorts still start empty, while existing cohorts can be opened, edited, or removed from the same workspace.
-            </p>
+            </div>
 
             <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
               <span style={{ padding: "8px 12px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.accentBorder}`, backgroundColor: ADMIN_THEME.accentBg, color: ADMIN_THEME.accent, fontSize: "12px", letterSpacing: "0px", textTransform: "uppercase" }}>
-                New cohort creation
+                {cohorts.length} stored cohort{cohorts.length === 1 ? "" : "s"}
               </span>
               <span style={{ padding: "8px 12px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.border}`, backgroundColor: ADMIN_THEME.surfaceSoft, color: ADMIN_THEME.muted, fontSize: "12px", letterSpacing: "0px", textTransform: "uppercase" }}>
-                Existing cohort management
+                {isCreateMode ? "Attendance-ready desk" : "Create, edit, archive"}
               </span>
-              <span style={{ padding: "8px 12px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.border}`, backgroundColor: ADMIN_THEME.surfaceSoft, color: ADMIN_THEME.muted, fontSize: "12px", letterSpacing: "0px", textTransform: "uppercase" }}>
-                Attendance-ready desk
-              </span>
+              {isCreateMode || isCreatePanelOpen ? (
+                <span style={{ padding: "8px 12px", borderRadius: "999px", border: `1px solid ${ADMIN_THEME.border}`, backgroundColor: ADMIN_THEME.surfaceSoft, color: ADMIN_THEME.muted, fontSize: "12px", letterSpacing: "0px", textTransform: "uppercase" }}>
+                  Create and optionally open dashboard
+                </span>
+              ) : null}
             </div>
           </div>
         </Surface>
 
-        <div className="cohort-create-grid">
-          <Surface style={{ padding: "24px", alignSelf: "start" }}>
-            <SectionTitle eyebrow="New Cohort" title="Core Setup" detail="These fields define the desk" />
-
-            <div className="cohort-create-form-grid">
-              <div>
-                <FieldLabel>Cohort Name</FieldLabel>
-                <FieldShell>
-                  <input
-                    value={cohortDraft.name}
-                    onChange={(event) => updateDraft("name", event.target.value)}
-                    placeholder="Juniors · Saturday"
-                    style={inputStyle}
-                  />
-                </FieldShell>
-              </div>
-
-              <div>
-                <FieldLabel>Program</FieldLabel>
-                <FieldShell>
-                  <input
-                    value={cohortDraft.program}
-                    onChange={(event) => updateDraft("program", event.target.value)}
-                    placeholder="Level 1 Beginner"
-                    style={inputStyle}
-                  />
-                </FieldShell>
-              </div>
-
-              <div>
-                <FieldLabel>Lead Coach</FieldLabel>
-                <FieldShell>
-                  <input
-                    value={cohortDraft.coach}
-                    onChange={(event) => updateDraft("coach", event.target.value)}
-                    placeholder="Coach Kareem"
-                    style={inputStyle}
-                  />
-                </FieldShell>
-              </div>
-
-              <div>
-                <FieldLabel>Capacity</FieldLabel>
-                <FieldShell>
-                  <input
-                    value={cohortDraft.capacity}
-                    onChange={(event) => updateDraft("capacity", event.target.value.replace(/[^\d]/g, ""))}
-                    placeholder="10"
-                    inputMode="numeric"
-                    style={inputStyle}
-                  />
-                </FieldShell>
-              </div>
-
-              <div className="cohort-create-full-span">
-                <FieldLabel>Cadence</FieldLabel>
-                <FieldShell>
-                  <input
-                    value={cohortDraft.cadence}
-                    onChange={(event) => updateDraft("cadence", event.target.value)}
-                    placeholder="Saturday · 10:00 AM to 12:00 PM"
-                    style={inputStyle}
-                  />
-                </FieldShell>
-              </div>
-
-              <div className="cohort-create-full-span">
-                <FieldLabel>Room / Track Base</FieldLabel>
-                <FieldShell>
-                  <input
-                    value={cohortDraft.room}
-                    onChange={(event) => updateDraft("room", event.target.value)}
-                    placeholder="Indoor Kartdrome"
-                    style={inputStyle}
-                  />
-                </FieldShell>
-              </div>
-            </div>
-
-            {errorMessage ? (
-              <p
-                style={{
-                  margin: "14px 0 0 0",
-                  padding: "12px 14px",
-                  borderRadius: "14px",
-                  border: `1px solid ${ADMIN_THEME.accentBorder}`,
-                  backgroundColor: ADMIN_THEME.accentBg,
-                  color: ADMIN_THEME.accent,
-                  fontSize: "12px",
-                  lineHeight: 1.5,
-                }}
-              >
-                {errorMessage}
-              </p>
-            ) : null}
-
-            <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "center", flexWrap: "wrap", marginTop: "18px" }}>
-              <p style={{ color: ADMIN_THEME.subtle, fontSize: "12px", lineHeight: 1.6, margin: 0 }}>
-                New cohorts start with an empty roster, session list, syllabus plan, report log, and announcements log.
-              </p>
-              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                <ActionButton secondary onClick={() => handleCreateCohort(false)} style={{ minWidth: "176px" }}>
-                  Create And Return
-                </ActionButton>
-                <ActionButton onClick={() => handleCreateCohort(true)} style={{ minWidth: "238px" }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
-                    <Plus size={16} /> Create And Open Dashboard
-                  </span>
-                </ActionButton>
-              </div>
-            </div>
-          </Surface>
-
-          <div className="cohort-create-side-stack">
-            <Surface style={{ padding: "24px", alignSelf: "start" }}>
-              <SectionTitle eyebrow="Preview" title={trimmedName || "New Cohort"} subdetail={cohortDraft.program.trim() || "Program not set"} />
-
-              <div style={{ display: "grid", gap: "12px" }}>
-                <div style={{ padding: "14px 15px", borderRadius: "16px", ...nestedCardStyle }}>
-                  <p style={{ color: ADMIN_THEME.subtle, fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 6px 0" }}>
-                    Operating Slot
-                  </p>
-                  <p style={{ color: ADMIN_THEME.heading, fontSize: "14px", fontWeight: 700, margin: "0 0 4px 0" }}>
-                    {cohortDraft.cadence.trim() || "Cadence pending"}
-                  </p>
-                  <p style={{ color: ADMIN_THEME.muted, fontSize: "13px", margin: 0 }}>
-                    {cohortDraft.room.trim() || "Room pending"} · {cohortDraft.coach.trim() || "Coach pending"}
-                  </p>
-                </div>
-
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: "10px" }}>
-                  <div style={{ padding: "12px 13px", borderRadius: "14px", ...nestedCardStyle }}>
-                    <p style={{ color: ADMIN_THEME.subtle, fontSize: "9px", letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 6px 0" }}>Seats</p>
-                    <p style={{ color: ADMIN_THEME.heading, fontSize: "13px", fontWeight: 700, margin: 0 }}>{previewCapacity || "0"}</p>
-                  </div>
-                  <div style={{ padding: "12px 13px", borderRadius: "14px", ...nestedCardStyle }}>
-                    <p style={{ color: ADMIN_THEME.subtle, fontSize: "9px", letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 6px 0" }}>Students</p>
-                    <p style={{ color: ADMIN_THEME.heading, fontSize: "13px", fontWeight: 700, margin: 0 }}>0</p>
-                  </div>
-                  <div style={{ padding: "12px 13px", borderRadius: "14px", ...nestedCardStyle }}>
-                    <p style={{ color: ADMIN_THEME.subtle, fontSize: "9px", letterSpacing: "0px", textTransform: "uppercase", margin: "0 0 6px 0" }}>Sessions</p>
-                    <p style={{ color: ADMIN_THEME.heading, fontSize: "13px", fontWeight: 700, margin: 0 }}>0</p>
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                  <span style={{ padding: "7px 10px", borderRadius: "999px", backgroundColor: ADMIN_THEME.accentBg, border: `1px solid ${ADMIN_THEME.accentBorder}`, color: ADMIN_THEME.accent, fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase" }}>
-                    {cohorts.length + 1} total cohorts after save
-                  </span>
-                  {duplicateName ? (
-                    <span style={{ padding: "7px 10px", borderRadius: "999px", backgroundColor: ADMIN_THEME.surfaceSoft, border: `1px solid ${ADMIN_THEME.border}`, color: ADMIN_THEME.accent, fontSize: "10px", letterSpacing: "0px", textTransform: "uppercase" }}>
-                      Rename required
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-            </Surface>
-
-            <Surface style={{ padding: "24px", alignSelf: "start" }}>
-              <SectionTitle eyebrow="Portfolio" title="Cohort Snapshot" detail={`${cohorts.length} stored`} />
-
-              <div style={{ display: "grid", gap: "10px" }}>
-                {[
-                  {
-                    icon: <Users size={16} />,
-                    title: `${cohortPortfolio.students} enrolled students`,
-                    copy: "Open any existing cohort dashboard from below to continue roster management and coach reporting.",
-                  },
-                  {
-                    icon: <CalendarDays size={16} />,
-                    title: `${cohortPortfolio.sessions} scheduled sessions`,
-                    copy: "Existing cohorts keep their class timeline and teaching data while you update the core desk details here.",
-                  },
-                  {
-                    icon: <GraduationCap size={16} />,
-                    title: `${cohortPortfolio.announcements} stored updates`,
-                    copy: "Turn on edit mode below only when needed so delete controls stay tucked away during normal browsing.",
-                  },
-                ].map((item) => (
-                  <div
-                    key={item.title}
-                    style={{
-                      padding: "14px",
-                      borderRadius: "16px",
-                      display: "grid",
-                      gap: "8px",
-                      ...nestedCardStyle,
-                    }}
-                  >
-                    <div style={{ display: "inline-flex", alignItems: "center", gap: "8px", color: ADMIN_THEME.heading }}>
-                      {item.icon}
-                      <span style={{ fontSize: "13px", fontWeight: 800, letterSpacing: "0px", textTransform: "uppercase" }}>{item.title}</span>
-                    </div>
-                    <p style={{ color: ADMIN_THEME.muted, fontSize: "13px", lineHeight: 1.55, margin: 0 }}>{item.copy}</p>
-                  </div>
-                ))}
-
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: "8px", color: ADMIN_THEME.heading, fontSize: "13px", fontWeight: 800, letterSpacing: "0px", textTransform: "uppercase" }}>
-                    Create and manage from one page <ArrowRight size={16} />
-                  </span>
-                </div>
-              </div>
-            </Surface>
-          </div>
-        </div>
-
         <Surface style={{ padding: "24px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: "14px", alignItems: "flex-start", flexWrap: "wrap", marginBottom: "18px" }}>
-            <div style={{ display: "grid", gap: "8px", maxWidth: "720px" }}>
+            <div style={{ maxWidth: "720px" }}>
               <SectionTitle eyebrow="Existing Cohorts" title="Manage Stored Desks" detail={`${cohorts.length} available`} />
-              <p style={{ color: ADMIN_THEME.muted, fontSize: "13px", lineHeight: 1.65, margin: 0 }}>
-                Open any cohort dashboard directly from here, or turn on edit mode to update desk details and remove retired cohorts.
-              </p>
             </div>
 
-            <ActionButton secondary onClick={handleToggleEditMode} style={{ minWidth: "188px" }}>
-              {isCohortEditMode ? "Done Editing" : "Edit Cohorts"}
-            </ActionButton>
+            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+              {!isCreatePanelOpen ? (
+                <ActionButton onClick={() => setIsCreatePanelOpen(true)} style={{ minWidth: "188px" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                    <Plus size={16} /> Create Cohort
+                  </span>
+                </ActionButton>
+              ) : null}
+              <ActionButton secondary onClick={handleToggleEditMode} style={{ minWidth: "188px" }}>
+                {isCohortEditMode ? "Done Editing" : "Edit Cohorts"}
+              </ActionButton>
+            </div>
           </div>
+
+          {isCreateMode || isCreatePanelOpen ? (
+            <div className="cohort-create-grid" style={{ marginBottom: "18px" }}>
+              <div style={{ padding: "24px", borderRadius: "22px", ...nestedCardStyle }}>
+                <SectionTitle
+                  eyebrow="New Cohort"
+                  title={isCreateMode ? "Core Setup" : "Create Cohort"}
+                  detail={isCreateMode ? "These fields define the desk." : "Add a new cohort without leaving cohort management."}
+                />
+
+                <div className="cohort-create-form-grid">
+                  <div>
+                    <FieldLabel>Cohort Name</FieldLabel>
+                    <FieldShell>
+                      <input
+                        value={cohortDraft.name}
+                        onChange={(event) => updateDraft("name", event.target.value)}
+                        placeholder="Juniors · Saturday"
+                        style={inputStyle}
+                      />
+                    </FieldShell>
+                  </div>
+
+                  <div>
+                    <FieldLabel>Program</FieldLabel>
+                    <FieldShell>
+                      <input
+                        value={cohortDraft.program}
+                        onChange={(event) => updateDraft("program", event.target.value)}
+                        placeholder="Level 1 Beginner"
+                        style={inputStyle}
+                      />
+                    </FieldShell>
+                  </div>
+
+                  <div>
+                    <FieldLabel>Lead Coach</FieldLabel>
+                    <FieldShell>
+                      <input
+                        value={cohortDraft.coach}
+                        onChange={(event) => updateDraft("coach", event.target.value)}
+                        placeholder="Coach Kareem"
+                        style={inputStyle}
+                      />
+                    </FieldShell>
+                  </div>
+
+                  <div>
+                    <FieldLabel>Capacity</FieldLabel>
+                    <FieldShell>
+                      <input
+                        value={cohortDraft.capacity}
+                        onChange={(event) => updateDraft("capacity", event.target.value.replace(/[^\d]/g, ""))}
+                        placeholder="10"
+                        inputMode="numeric"
+                        style={inputStyle}
+                      />
+                    </FieldShell>
+                  </div>
+
+                  <div className="cohort-create-full-span">
+                    <FieldLabel>Cadence</FieldLabel>
+                    <FieldShell>
+                      <input
+                        value={cohortDraft.cadence}
+                        onChange={(event) => updateDraft("cadence", event.target.value)}
+                        placeholder="Saturday · 10:00 AM to 12:00 PM"
+                        style={inputStyle}
+                      />
+                    </FieldShell>
+                  </div>
+
+                  <div className="cohort-create-full-span">
+                    <FieldLabel>Room / Track Base</FieldLabel>
+                    <FieldShell>
+                      <input
+                        value={cohortDraft.room}
+                        onChange={(event) => updateDraft("room", event.target.value)}
+                        placeholder="Indoor Kartdrome"
+                        style={inputStyle}
+                      />
+                    </FieldShell>
+                  </div>
+                </div>
+
+                {errorMessage ? (
+                  <p
+                    style={{
+                      margin: "14px 0 0 0",
+                      padding: "12px 14px",
+                      borderRadius: "14px",
+                      border: `1px solid ${ADMIN_THEME.accentBorder}`,
+                      backgroundColor: ADMIN_THEME.accentBg,
+                      color: ADMIN_THEME.accent,
+                      fontSize: "12px",
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {errorMessage}
+                  </p>
+                ) : null}
+
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", flexWrap: "wrap", marginTop: "18px" }}>
+                    {isCreateMode ? (
+                      <ActionButton secondary onClick={() => handleCreateCohort(false)} style={{ minWidth: "176px" }}>
+                        Create And Return
+                      </ActionButton>
+                    ) : (
+                      <>
+                        <ActionButton secondary onClick={() => setIsCreatePanelOpen(false)} style={{ minWidth: "152px" }}>
+                          Close Form
+                        </ActionButton>
+                        <ActionButton secondary onClick={() => handleCreateCohort(false)} style={{ minWidth: "176px" }}>
+                          Create Cohort
+                        </ActionButton>
+                      </>
+                    )}
+                    <ActionButton onClick={() => handleCreateCohort(true)} style={{ minWidth: "238px" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: "8px" }}>
+                        <Plus size={16} /> Create And Open Dashboard
+                      </span>
+                    </ActionButton>
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           {displayedCohorts.length === 0 ? (
             <div
@@ -638,12 +595,13 @@ export function AdminCreateCohortPage({
                 lineHeight: 1.6,
               }}
             >
-              No cohorts have been created yet. Use the form above to create the first cohort desk.
+              No cohorts have been created yet. Use the create cohort panel above to create the first cohort desk.
             </div>
           ) : (
             <div className="cohort-existing-grid">
               {displayedCohorts.map((cohort) => {
-                const completedSyllabus = cohort.syllabus.filter((item) => item.status === "Completed").length;
+                const completedSyllabus = cohort.syllabus.filter((item) => item.status === "complete").length;
+                const isArchived = cohort.archived ?? false;
 
                 return (
                   <div
@@ -654,13 +612,21 @@ export function AdminCreateCohortPage({
                       padding: "18px",
                       borderRadius: "20px",
                       ...nestedCardStyle,
+                      opacity: isArchived ? 0.65 : 1,
                     }}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start" }}>
                       <div style={{ display: "grid", gap: "5px" }}>
-                        <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", fontWeight: 700, letterSpacing: "0px", textTransform: "uppercase", margin: 0 }}>
-                          {cohort.program}
-                        </p>
+                        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                          <p style={{ color: ADMIN_THEME.accent, fontSize: "10px", fontWeight: 700, letterSpacing: "0px", textTransform: "uppercase", margin: 0 }}>
+                            {cohort.program}
+                          </p>
+                          {isArchived && (
+                            <span style={{ padding: "2px 8px", borderRadius: "999px", backgroundColor: ADMIN_THEME.surfaceSoft, border: `1px solid ${ADMIN_THEME.border}`, color: ADMIN_THEME.subtle, fontSize: "9px", fontWeight: 700, letterSpacing: "0px", textTransform: "uppercase" }}>
+                              Archived
+                            </span>
+                          )}
+                        </div>
                         <h3 style={{ color: ADMIN_THEME.heading, fontSize: "22px", fontFamily: "var(--font-heading)", margin: 0, lineHeight: 0.98 }}>
                           {cohort.name}
                         </h3>
@@ -730,6 +696,25 @@ export function AdminCreateCohortPage({
                               }}
                             >
                               Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleArchiveCohort(cohort.id)}
+                              style={{
+                                minHeight: "36px",
+                                padding: "0 14px",
+                                borderRadius: "999px",
+                                border: `1px solid ${ADMIN_THEME.border}`,
+                                backgroundColor: isArchived ? ADMIN_THEME.surface : ADMIN_THEME.surfaceSoft,
+                                color: ADMIN_THEME.subtle,
+                                fontSize: "11px",
+                                fontWeight: 800,
+                                letterSpacing: "0px",
+                                textTransform: "uppercase",
+                                cursor: "pointer",
+                              }}
+                            >
+                              {isArchived ? "Unarchive" : "Archive"}
                             </button>
                             <button
                               type="button"
